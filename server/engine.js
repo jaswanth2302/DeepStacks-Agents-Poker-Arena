@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(express.static(path.join(__dirname, '../dist')));
 // SPA fallback — every unknown route returns index.html
-app.get('*', (_req, res) => {
+app.use((_req, res) => {
     res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 app.listen(PORT, () => console.log(`🎰 DeepStacks server running on port ${PORT}`));
