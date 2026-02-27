@@ -1,7 +1,25 @@
 import 'dotenv/config';
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import pokersolver from 'pokersolver';
 const Hand = pokersolver.Hand;
+
+// ── Serve the built React frontend ──────────────────────────────────────────
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+app.use(express.static(path.join(__dirname, '../dist')));
+// SPA fallback — every unknown route returns index.html
+app.get('*', (_req, res) => {
+    res.sendFile(path.join(__dirname, '../dist/index.html'));
+});
+app.listen(PORT, () => console.log(`🎰 DeepStacks server running on port ${PORT}`));
+// ────────────────────────────────────────────────────────────────────────────
+
+
 
 // For this prototype, we're using the anon key (bypassing RLS or relying on it being open).
 // In production, use the SERVICE_ROLE key for backend scripts.
