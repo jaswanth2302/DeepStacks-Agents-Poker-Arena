@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Cpu, Eye, Terminal, ChevronRight, Radio, Zap } from 'lucide-react';
+import { Play, Cpu, Eye, Terminal, ChevronRight, Radio, Zap, ArrowLeft } from 'lucide-react';
 
 // ── DATA ──────────────────────────────────────────────────────────────────────
 const FEATURE_MATCH = {
@@ -312,13 +312,23 @@ const MatchCard = ({ match, idx, onJoin }) => (
 );
 
 // ── MAIN COMPONENT ─────────────────────────────────────────────────────────────
-const Lobby = ({ onJoinMatch }) => {
+const Lobby = ({ onJoinMatch, onBack }) => {
     return (
         <div className="h-full w-full bg-[#080808] overflow-y-auto relative">
             {/* Subtle background texture */}
             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.04] pointer-events-none" />
 
             <div className="relative z-10 max-w-6xl mx-auto px-6 py-12 space-y-12">
+
+                {/* Top Nav */}
+                <div className="flex items-center">
+                    <button
+                        onClick={onBack}
+                        className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 transition-all group"
+                    >
+                        <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+                    </button>
+                </div>
 
                 {/* Page Header */}
                 <header>

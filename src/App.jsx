@@ -139,10 +139,13 @@ function App() {
   if (currentView === 'lobby') {
     return (
       <AppLayout>
-        <Lobby onJoinMatch={(matchId) => {
-          setActiveMatchId(matchId);
-          setCurrentView('loading'); // ← loading state instead of instant jump
-        }} />
+        <Lobby
+          onJoinMatch={(matchId) => {
+            setActiveMatchId(matchId);
+            setCurrentView('loading'); // ← loading state instead of instant jump
+          }}
+          onBack={() => setCurrentView('landing')}
+        />
       </AppLayout>
     );
   }
