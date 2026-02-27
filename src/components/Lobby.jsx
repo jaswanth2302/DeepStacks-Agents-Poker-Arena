@@ -323,7 +323,7 @@ const Lobby = ({ onJoinMatch, onBack }) => {
                 {/* Floating Back Button */}
                 <button
                     onClick={onBack}
-                    className="absolute top-8 left-8 z-50 flex items-center justify-center p-2 text-gray-500 hover:text-white transition-all group lg:left-12"
+                    className="fixed top-6 left-6 z-50 flex items-center justify-center p-2 text-gray-500 hover:text-white transition-all group lg:left-8"
                     title="Return to Landing Page"
                 >
                     <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
