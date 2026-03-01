@@ -38,9 +38,16 @@ function createDeck() {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Minimum ms between consecutive actions within a betting round.
+// Gives spectators time to see each action before the next fires.
+const SPECTATOR_PACE_MS = 3000;
+
 // ── Table Registry ───────────────────────────────────────────────────────────
 // Maps sessionId → GameInstance for all currently running tables
 const tableRegistry = new Map();
+
+// agentId → Date.now() of their last /my-game or /action poll
+const agentLastPoll = new Map();
 
 // ── GameInstance ─────────────────────────────────────────────────────────────
 class GameInstance {
@@ -270,6 +277,8 @@ class GameInstance {
         });
 
         console.log(`[${this.tag()}] ${player.name}: ${action} $${amount}`);
+        // Pace for spectators: action is already in DB, delay before advancing
+        if (SPECTATOR_PACE_MS > 0) await sleep(SPECTATOR_PACE_MS);
         await this.advanceTurnIndex();
     }
 
@@ -421,12 +430,28 @@ const queueManager = {
 
     async tick() {
         if (this.ticking) return;       // guard against overlapping ticks
-        if (this.queue.length === 0) return;
         this.ticking = true;
         try {
+            const now = Date.now();
+
+            // Detect disconnected agents at tables (no poll for 60s)
+            const DISCONNECT_MS = 60_000;
+            for (const [, instance] of tableRegistry) {
+                for (const p of [...instance.state.players]) {
+                    if (p.status !== 'active') continue;
+                    const lastPoll = agentLastPoll.get(p.id);
+                    if (lastPoll && (now - lastPoll) > DISCONNECT_MS) {
+                        console.log(`[Queue] ${p.name} disconnected (no poll for ${((now - lastPoll) / 1000).toFixed(0)}s) — removing`);
+                        await instance.removePlayer(p.id);
+                        agentLastPoll.delete(p.id);
+                    }
+                }
+            }
+
+            if (this.queue.length === 0) return;
+
             // Purge stale entries — agents waiting longer than 5 minutes
             const STALE_MS = 5 * 60 * 1000;
-            const now = Date.now();
             const stale = this.queue.filter(e => now - e.queuedAt > STALE_MS);
             for (const s of stale) {
                 console.log(`[Queue] Removing stale entry: ${s.agentRecord.name} (waited ${((now - s.queuedAt) / 1000).toFixed(0)}s)`);
@@ -522,8 +547,9 @@ const queueManager = {
 
         // Not enough players — mark session completed and destroy table
         await supabase.from('game_sessions').update({ status: 'completed' }).eq('id', sessionId);
+        await instance.destroy();
 
-        // Re-queue surviving agents so they auto-find a new table
+        // Re-queue surviving agents (destroy first so enqueue check passes)
         for (const p of alive) {
             const { data: agentRecord } = await supabase.from('agents').select('*').eq('id', p.id).maybeSingle();
             if (agentRecord) {
@@ -531,8 +557,6 @@ const queueManager = {
                 this.enqueue(agentRecord);
             }
         }
-
-        await instance.destroy();
 
         // If enough agents are waiting, launch a new table immediately
         if (tableRegistry.size === 0 && this.queue.length >= 2) {
@@ -613,6 +637,7 @@ app.post('/join-queue', async (req, res) => {
 app.get('/my-game', async (req, res) => {
     const agent = await authenticateAgent(req);
     if (!agent) return res.status(401).json({ error: 'Missing or invalid Bearer token' });
+    agentLastPoll.set(agent.id, Date.now());
 
     // Check if in queue
     const queueEntry = queueManager.queue.find(e => e.agentId === agent.id);
@@ -699,6 +724,7 @@ app.get('/my-game', async (req, res) => {
 app.post('/action', async (req, res) => {
     const agent = await authenticateAgent(req);
     if (!agent) return res.status(401).json({ error: 'Missing or invalid Bearer token' });
+    agentLastPoll.set(agent.id, Date.now());
 
     const found = findTableForAgent(agent.id);
     if (!found) return res.status(404).json({ error: 'You are not at a table' });
@@ -786,10 +812,16 @@ app.post('/leave', async (req, res) => {
 });
 
 app.get('/queue-status', (_req, res) => {
+    // Filter out agents that are already at a table (race condition defense)
+    const playingIds = new Set();
+    for (const inst of tableRegistry.values())
+        for (const p of inst.state.players) playingIds.add(p.id);
+    const filtered = queueManager.queue.filter(e => !playingIds.has(e.agentId));
+
     res.json({
-        queue_length: queueManager.queue.length,
+        queue_length: filtered.length,
         active_tables: tableRegistry.size,
-        queued_agents: queueManager.queue.map(e => ({
+        queued_agents: filtered.map(e => ({
             id: e.agentId,
             name: e.agentRecord.name,
             waited_ms: Date.now() - e.queuedAt,

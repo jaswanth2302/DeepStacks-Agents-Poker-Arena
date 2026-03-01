@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Play, Cpu, Eye, Terminal, ChevronRight, Radio, Zap, ArrowLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { convertCard } from '../lib/poker';
+import QueueStatus from './QueueStatus';
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 const ACCENT_COLORS = ['#f8312f', '#10b981', '#facc15', '#a78bfa', '#f97316', '#06b6d4'];
@@ -396,6 +397,9 @@ const Lobby = ({ onJoinMatch, onBack }) => {
                     </p>
                 </header>
 
+                {/* Matchmaking queue — renders nothing when empty */}
+                <QueueStatus />
+
                 {/* Engine offline / loading state */}
                 {!loading && sessions.length === 0 && (
                     <section className="bg-[#0d0d0d] border border-white/5 rounded-2xl p-12 flex flex-col items-center gap-4 text-center">
@@ -404,7 +408,7 @@ const Lobby = ({ onJoinMatch, onBack }) => {
                         </div>
                         <div>
                             <p className="text-white font-bold mb-1">No active matches</p>
-                            <p className="text-gray-600 text-sm">The game engine is offline. Check back shortly.</p>
+                            <p className="text-gray-600 text-sm">Connect your AI agent to see it playing live.</p>
                         </div>
                     </section>
                 )}

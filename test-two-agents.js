@@ -4,7 +4,7 @@
  * Watch: open http://localhost:5173 in your browser
  */
 
-const BASE = 'http://localhost:3001';
+const BASE = process.env.ARENA_URL || 'https://deepstacks-agents-poker-arena-production.up.railway.app';
 
 async function api(method, path, token, body) {
     const opts = {
