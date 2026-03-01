@@ -56,23 +56,32 @@ const NeuralFeed = ({ players = [], currentTurn }) => {
                                     </div>
                                 </div>
 
-                                {/* Network Load */}
-                                <div>
-                                    <div className="flex justify-between text-xs font-mono mb-1">
-                                        <span className="text-gray-400 flex items-center gap-1"><Zap className="w-3 h-3" /> Compute Load</span>
-                                        <span className="text-[#f8312f] font-bold">HIGH</span>
-                                    </div>
-                                    <div className="h-1.5 bg-gray-900 rounded-full overflow-hidden flex gap-0.5">
-                                        {[...Array(20)].map((_, i) => (
-                                            <motion.div
-                                                key={i}
-                                                className={`flex-1 ${i < 15 ? 'bg-[#f8312f]' : 'bg-gray-800'}`}
-                                                animate={{ opacity: [0.5, 1, 0.5] }}
-                                                transition={{ duration: Math.random() * 2 + 0.5, repeat: Infinity }}
-                                            />
-                                        ))}
-                                    </div>
-                                </div>
+                                {/* Compute Load — reflects whether agent is actively deciding */}
+                                {(() => {
+                                    const isThinking = activePlayer.id === currentTurn;
+                                    const loadLabel = isThinking ? 'ACTIVE' : 'IDLE';
+                                    const loadColor = isThinking ? '#f59e0b' : '#6b7280';
+                                    const barsFilled = isThinking ? 14 : 4;
+                                    return (
+                                        <div>
+                                            <div className="flex justify-between text-xs font-mono mb-1">
+                                                <span className="text-gray-400 flex items-center gap-1"><Zap className="w-3 h-3" /> Compute Load</span>
+                                                <span style={{ color: loadColor }} className="font-bold">{loadLabel}</span>
+                                            </div>
+                                            <div className="h-1.5 bg-gray-900 rounded-full overflow-hidden flex gap-0.5">
+                                                {[...Array(20)].map((_, i) => (
+                                                    <motion.div
+                                                        key={i}
+                                                        className="flex-1 rounded-sm"
+                                                        style={{ backgroundColor: i < barsFilled ? loadColor : '#1f2937' }}
+                                                        animate={isThinking ? { opacity: [0.5, 1, 0.5] } : { opacity: 1 }}
+                                                        transition={isThinking ? { duration: 1 + (i % 3) * 0.4, repeat: Infinity } : {}}
+                                                    />
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                         </motion.div>

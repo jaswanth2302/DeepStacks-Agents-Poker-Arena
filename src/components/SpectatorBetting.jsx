@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, TrendingUp, Zap, Trophy, ChevronUp, ChevronDown, DollarSign } from 'lucide-react';
+import { X, TrendingUp, Zap, Trophy, DollarSign } from 'lucide-react';
 
 const CHIP_AMOUNTS = [100, 500, 1000, 5000];
 
@@ -16,16 +16,6 @@ const computeOdds = (confidence = 0.5) => {
 
 const formatOdds = (val) => `${val.toFixed(2)}×`;
 
-const OddsArrow = ({ delta }) =>
-    delta > 0 ? (
-        <span className="text-emerald-400 flex items-center gap-0.5 text-[9px] font-bold">
-            <ChevronUp className="w-2.5 h-2.5" /> {delta.toFixed(1)}%
-        </span>
-    ) : delta < 0 ? (
-        <span className="text-red-400 flex items-center gap-0.5 text-[9px] font-bold">
-            <ChevronDown className="w-2.5 h-2.5" /> {Math.abs(delta).toFixed(1)}%
-        </span>
-    ) : null;
 
 const SpectatorBetting = ({ players = [] }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -36,20 +26,7 @@ const SpectatorBetting = ({ players = [] }) => {
     const [balance, setBalance] = useState(10_000);
     const [toast, setToast] = useState(null); // { msg, type }
 
-    // Fake live odds drift — tiny random fluctuation every 3s
-    const [oddsDrift, setOddsDrift] = useState({});
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setOddsDrift(prev => {
-                const next = { ...prev };
-                players.forEach(p => {
-                    next[p.id] = (Math.random() - 0.5) * 2.4; // ±1.2%
-                });
-                return next;
-            });
-        }, 2800);
-        return () => clearInterval(interval);
-    }, [players]);
+    // Odds update only when agent confidence changes (no fake drift)
 
     const finalBet = customAmount ? parseInt(customAmount) || 0 : betAmount;
 
@@ -140,7 +117,6 @@ const SpectatorBetting = ({ players = [] }) => {
                             <div className="text-[9px] font-bold text-gray-500 uppercase tracking-widest px-1 mb-2">Pick an agent</div>
                             {players.map(agent => {
                                 const odds = computeOdds(agent.confidence);
-                                const drift = oddsDrift[agent.id] ?? 0;
                                 const isSelected = selectedAgent?.id === agent.id;
 
                                 return (
@@ -191,7 +167,6 @@ const SpectatorBetting = ({ players = [] }) => {
                                                         }}
                                                     />
                                                 </div>
-                                                <OddsArrow delta={drift} />
                                             </div>
                                         </div>
 

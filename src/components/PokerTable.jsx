@@ -1,13 +1,29 @@
-import React from 'react';
 import AgentCard from './AgentCard';
 import PlayingCard from './PlayingCard';
 import SpectatorBetting from './SpectatorBetting';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, MessageSquare, Send, Activity, Cpu, TrendingUp, Zap } from 'lucide-react';
+import { ArrowLeft, MessageSquare, Send, Activity, Cpu, Zap } from 'lucide-react';
 
 
 
-const PokerTable = ({ players, currentTurn, potSize, communityCards, spectatedAgentId, onAgentClick, onLeave }) => {
+const ACTION_COLORS = {
+    fold: 'text-red-400',
+    call: 'text-blue-400',
+    raise: 'text-yellow-400',
+    check: 'text-green-400',
+    win: 'text-emerald-400',
+    small_blind: 'text-gray-400',
+    big_blind: 'text-gray-400',
+};
+
+function formatLogEntry(entry) {
+    const name = entry.agents?.name || 'System';
+    const action = entry.action?.toLowerCase() || '';
+    const amt = entry.amount > 0 ? ` $${entry.amount.toLocaleString()}` : '';
+    return { name, action, amt };
+}
+
+const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = [], spectatedAgentId, onAgentClick, onLeave }) => {
     // Find where the spectated agent is in the array
     const spectatedIndex = players.findIndex(p => p.id === spectatedAgentId);
 
@@ -57,39 +73,51 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, spectatedAg
                             {/* Center Table Line */}
                             <div className="absolute inset-x-24 inset-y-12 rounded-[100px] border border-white/10" />
 
-                            {/* Pot and Community Cards Area */}
-                            <div className="absolute flex flex-col items-center gap-4 z-20 top-1/2 -translate-y-[60%]">
-
-                                {/* Community Cards */}
-                                <div className="flex gap-2">
-                                    <AnimatePresence>
-                                        {communityCards.map((card, i) => (
-                                            <PlayingCard key={i} card={card} width={65} height={95} animate delay={i * 0.12} />
-                                        ))}
-                                    </AnimatePresence>
+                            {/* Pot and Community Cards Area — only render when players exist */}
+                            {players.length === 0 ? (
+                                <div className="absolute flex flex-col items-center gap-3 z-20 top-1/2 -translate-y-1/2 text-center">
+                                    <div className="text-2xl opacity-20">♠♥♦♣</div>
+                                    <p className="text-white/30 text-xs font-mono uppercase tracking-widest">Waiting for agents…</p>
                                 </div>
+                            ) : (
+                                <div className="absolute flex flex-col items-center gap-4 z-20 top-1/2 -translate-y-[60%]">
 
-                                {/* Center Pot Chips stack */}
-                                <div className="flex flex-col items-center gap-2">
-                                    <div className="flex gap-0.5 relative translate-y-2">
-                                        <div className="relative w-5 h-8">
-                                            {[...Array(5)].map((_, i) => (
-                                                <div key={i} className="absolute bottom-0 w-5 h-2 bg-slate-800 rounded-full border border-slate-600 shadow-[0_2px_0_#0f172a]" style={{ bottom: `${i * 3}px`, zIndex: i }}></div>
+                                    {/* Community Cards */}
+                                    <div className="flex gap-2">
+                                        <AnimatePresence>
+                                            {communityCards.map((card, i) => (
+                                                <PlayingCard key={i} card={card} width={65} height={95} animate delay={i * 0.12} />
                                             ))}
+                                        </AnimatePresence>
+                                    </div>
+
+                                    {/* Center Pot Chips stack + live pot amount */}
+                                    <div className="flex flex-col items-center gap-2">
+                                        <div className="flex gap-0.5 relative translate-y-2">
+                                            <div className="relative w-5 h-8">
+                                                {[...Array(5)].map((_, i) => (
+                                                    <div key={i} className="absolute bottom-0 w-5 h-2 bg-slate-800 rounded-full border border-slate-600 shadow-[0_2px_0_#0f172a]" style={{ bottom: `${i * 3}px`, zIndex: i }}></div>
+                                                ))}
+                                            </div>
+                                            <div className="relative w-5 h-6">
+                                                {[...Array(3)].map((_, i) => (
+                                                    <div key={i} className="absolute bottom-0 w-5 h-2 bg-red-600 rounded-full border border-red-500 shadow-[0_2px_0_#7f1d1d]" style={{ bottom: `${i * 3}px`, zIndex: i }}></div>
+                                                ))}
+                                            </div>
+                                            <div className="relative w-5 h-4">
+                                                {[...Array(2)].map((_, i) => (
+                                                    <div key={i} className="absolute bottom-0 w-5 h-2 bg-yellow-500 rounded-full border border-yellow-400 shadow-[0_2px_0_#92400e]" style={{ bottom: `${i * 3}px`, zIndex: i }}></div>
+                                                ))}
+                                            </div>
                                         </div>
-                                        <div className="relative w-5 h-6">
-                                            {[...Array(3)].map((_, i) => (
-                                                <div key={i} className="absolute bottom-0 w-5 h-2 bg-red-600 rounded-full border border-red-500 shadow-[0_2px_0_#7f1d1d]" style={{ bottom: `${i * 3}px`, zIndex: i }}></div>
-                                            ))}
-                                        </div>
-                                        <div className="relative w-5 h-4">
-                                            {[...Array(2)].map((_, i) => (
-                                                <div key={i} className="absolute bottom-0 w-5 h-2 bg-yellow-500 rounded-full border border-yellow-400 shadow-[0_2px_0_#92400e]" style={{ bottom: `${i * 3}px`, zIndex: i }}></div>
-                                            ))}
+                                        {/* Live pot amount */}
+                                        <div className="mt-3 px-3 py-0.5 bg-black/50 rounded-full border border-white/10">
+                                            <span className="font-mono text-[11px] text-white/60 uppercase tracking-widest">Pot </span>
+                                            <span className="font-mono text-[11px] font-bold text-white">${(potSize || 0).toLocaleString()}</span>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
+                            )}
 
                         </div>
                     </div>
@@ -142,18 +170,20 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, spectatedAg
                     <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-[#0f0f0f]/90 to-transparent pointer-events-none z-10 rounded-t-lg" />
 
                     <div className="relative z-0 space-y-2 pb-1">
-                        <div className="text-[11px] leading-snug">
-                            <span className="font-bold text-[#f8312f]">@system:</span> <span className="text-gray-400 italic">Match started. 1,240 spectators watching.</span>
-                        </div>
-                        <div className="text-[11px] leading-snug">
-                            <span className="font-bold text-blue-400">@poker_pro:</span> <span className="text-gray-300">AlphaBot is playing too aggressive here</span>
-                        </div>
-                        <div className="text-[11px] leading-snug">
-                            <span className="font-bold text-green-400">@spectator99:</span> <span className="text-gray-300">DeepStack has the nuts, watch 🍿</span>
-                        </div>
-                        <div className="text-[11px] leading-snug">
-                            <span className="font-bold text-purple-400">@ai_dev:</span> <span className="text-gray-300">Let&apos;s see if the bluff gets called</span>
-                        </div>
+                        {eventLog.length === 0 ? (
+                            <div className="text-[11px] text-gray-500 italic">Waiting for game actions…</div>
+                        ) : (
+                            eventLog.slice(-6).map((entry) => {
+                                const { name, action, amt } = formatLogEntry(entry);
+                                const color = ACTION_COLORS[action] || 'text-gray-400';
+                                return (
+                                    <div key={entry.id} className="text-[11px] leading-snug">
+                                        <span className="font-bold text-white/80">{name}</span>
+                                        <span className={`ml-1 font-mono font-semibold ${color}`}>{action}{amt}</span>
+                                    </div>
+                                );
+                            })
+                        )}
                     </div>
                 </div>
                 {/* Chat Input */}
@@ -190,18 +220,10 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, spectatedAg
                     const agent = players.find(p => p.id === spectatedAgentId);
                     if (!agent) return null;
 
-                    const seed = agent.id?.charCodeAt(0) || 65;
-                    const winPct = ((agent.confidence || 0.5) * 100).toFixed(1);
-                    const ev = (((seed % 7) - 2) * 420 + 840).toFixed(0);
-                    const evPos = parseFloat(ev) >= 0;
-                    const bluffRate = (18 + (seed % 30));
-                    const modes = ['GTO', 'EXPLOIT', 'TRAP', 'BLUFF', 'VALUE'];
-                    const mode = modes[seed % modes.length];
-                    const grades = ['A+', 'A', 'B+', 'B', 'C'];
-                    const hand = grades[seed % grades.length];
-                    const potOdds = (12 + (seed % 25)).toFixed(0);
-                    const decMs = (80 + (seed % 420));
-                    const lastAct = agent.lastAction || 'RAISE';
+                    const confidence = agent.confidence != null ? (agent.confidence * 100).toFixed(0) : null;
+                    const lastAct = agent.lastAction || '—';
+                    const thought = agent.thoughtProcess || null;
+                    const stackDisplay = agent.stack != null ? `$${agent.stack.toLocaleString()}` : '—';
 
                     return (
                         <motion.div
@@ -221,73 +243,47 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, spectatedAg
                                     <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
                                 </div>
 
-                                {/* Win Probability */}
-                                <div className="flex items-center gap-2 shrink-0">
-                                    <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Win</span>
-                                    <div className="w-20 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                                        <div
-                                            className="h-full rounded-full"
-                                            style={{ width: `${winPct}%`, backgroundColor: parseFloat(winPct) > 65 ? '#10b981' : parseFloat(winPct) > 40 ? '#facc15' : '#f8312f' }}
-                                        />
+                                {/* Stack */}
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Stack</span>
+                                    <span className="font-mono text-xs font-bold text-white">{stackDisplay}</span>
+                                </div>
+
+                                {/* Confidence */}
+                                {confidence != null && (
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Conf</span>
+                                        <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                            <div
+                                                className="h-full rounded-full"
+                                                style={{
+                                                    width: `${confidence}%`,
+                                                    backgroundColor: parseFloat(confidence) > 70 ? '#10b981' : parseFloat(confidence) > 45 ? '#facc15' : '#f8312f',
+                                                }}
+                                            />
+                                        </div>
+                                        <span className="font-mono text-xs font-bold text-white">{confidence}%</span>
                                     </div>
-                                    <span className="font-mono text-xs font-bold text-white">{winPct}%</span>
-                                </div>
-
-                                {/* EV */}
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                    <TrendingUp className="w-3 h-3" style={{ color: evPos ? '#10b981' : '#f8312f' }} />
-                                    <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">EV</span>
-                                    <span className="font-mono text-xs font-bold" style={{ color: evPos ? '#10b981' : '#f8312f' }}>
-                                        {evPos ? '+' : ''}{parseInt(ev).toLocaleString()} chips
-                                    </span>
-                                </div>
-
-                                {/* Strategy Mode */}
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                    <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Mode</span>
-                                    <span
-                                        className="text-[9px] font-mono font-black px-2 py-0.5 rounded tracking-widest uppercase"
-                                        style={{
-                                            color: mode === 'GTO' ? '#a78bfa' : mode === 'EXPLOIT' ? '#f8312f' : mode === 'BLUFF' ? '#facc15' : '#10b981',
-                                            backgroundColor: mode === 'GTO' ? '#a78bfa15' : mode === 'EXPLOIT' ? '#f8312f15' : mode === 'BLUFF' ? '#facc1515' : '#10b98115',
-                                            border: `1px solid ${mode === 'GTO' ? '#a78bfa40' : mode === 'EXPLOIT' ? '#f8312f40' : mode === 'BLUFF' ? '#facc1540' : '#10b98140'}`,
-                                        }}
-                                    >
-                                        {mode}
-                                    </span>
-                                </div>
-
-                                {/* Hand Strength */}
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                    <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Hand</span>
-                                    <span className="font-mono text-xs font-bold text-white">{hand}</span>
-                                </div>
-
-                                {/* Bluff Rate */}
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                    <Zap className="w-3 h-3 text-yellow-400" />
-                                    <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Bluff</span>
-                                    <span className="font-mono text-xs text-gray-300">{bluffRate}%</span>
-                                </div>
-
-                                {/* Pot Odds */}
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                    <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Pot Odds</span>
-                                    <span className="font-mono text-xs text-gray-300">{potOdds}%</span>
-                                </div>
+                                )}
 
                                 {/* Last Action */}
                                 <div className="flex items-center gap-1.5 shrink-0">
+                                    <Activity className="w-3 h-3 text-gray-500" />
                                     <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Action</span>
-                                    <span className="font-mono text-[10px] font-bold text-white">{lastAct}</span>
+                                    <span className={`font-mono text-[10px] font-bold uppercase ${ACTION_COLORS[lastAct] || 'text-white'}`}>{lastAct}</span>
+                                    {agent.currentBet > 0 && (
+                                        <span className="font-mono text-[10px] text-[#4ade80]">${agent.currentBet}</span>
+                                    )}
                                 </div>
 
-                                {/* Decision Time */}
-                                <div className="flex items-center gap-1.5 shrink-0 border-l border-white/10 pl-6 ml-auto">
-                                    <Activity className="w-3 h-3 text-gray-500" />
-                                    <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">Thought</span>
-                                    <span className="font-mono text-xs text-gray-300">{decMs}ms</span>
-                                </div>
+                                {/* Thought Process */}
+                                {thought && (
+                                    <div className="flex items-center gap-1.5 shrink-0 border-l border-white/10 pl-6 ml-auto max-w-[40%]">
+                                        <Zap className="w-3 h-3 text-yellow-400 shrink-0" />
+                                        <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest shrink-0">Reasoning</span>
+                                        <span className="font-mono text-[10px] text-gray-300 truncate">{thought}</span>
+                                    </div>
+                                )}
 
                             </div>
                         </motion.div>

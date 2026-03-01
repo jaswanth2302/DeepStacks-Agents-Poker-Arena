@@ -5,11 +5,13 @@ import PlayingCard from './PlayingCard';
 
 const AgentCard = ({ agent, active, positionIndex, isFocused }) => {
 
-    // Position 3 is the Hero (bottom center)
-    const isHero = positionIndex === 3;
+    // Scale up the bottom-center seat for visual focus.
+    // Only show face-up cards if we actually have hole card data (never in spectator mode).
+    const isBottomSeat = positionIndex === 3;
+    const isHero = isBottomSeat && agent.holeCards?.length >= 2;
 
     return (
-        <div className={`relative flex flex-col items-center justify-center w-36 ${isHero ? 'scale-[1.15]' : ''}`}>
+        <div className={`relative flex flex-col items-center justify-center w-36 ${isBottomSeat ? 'scale-[1.15]' : ''}`}>
 
             {/* Fanned Cards (Behind avatar) */}
             <div className="absolute top-[-30px] w-full flex justify-center items-end z-0">
@@ -21,14 +23,14 @@ const AgentCard = ({ agent, active, positionIndex, isFocused }) => {
                             animate={{ rotateZ: -12, x: 8, y: 5 }}
                             className="absolute -left-1"
                         >
-                            <PlayingCard card={agent.holeCards?.[0] || '5♦'} width={45} height={65} animate={false} />
+                            <PlayingCard card={agent.holeCards[0]} width={45} height={65} animate={false} />
                         </motion.div>
                         <motion.div
                             initial={{ rotateZ: 10, x: -5, y: 10 }}
                             animate={{ rotateZ: 12, x: -8, y: 5 }}
                             className="absolute -right-1"
                         >
-                            <PlayingCard card={agent.holeCards?.[1] || '5♦'} width={45} height={65} animate={false} />
+                            <PlayingCard card={agent.holeCards[1]} width={45} height={65} animate={false} />
                         </motion.div>
                     </div>
                 ) : (
@@ -55,13 +57,13 @@ const AgentCard = ({ agent, active, positionIndex, isFocused }) => {
 
                 <span className="drop-shadow-md">{agent.avatarUrl}</span>
 
-                {/* Top decorative chip badge (185$) */}
-                {isHero && (
+                {/* Chip badge showing real stack */}
+                {isHero && agent.stack != null && (
                     <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white rounded-full px-1.5 py-0.5 flex items-center gap-1 shadow-md border border-gray-200">
                         <div className="w-3 h-3 rounded-full bg-red-600 border border-white shrink-0 relative flex items-center justify-center">
                             <div className="w-1.5 h-1.5 rounded-full border border-white/50" />
                         </div>
-                        <span className="text-[9px] font-bold text-black leading-none pt-[1px] pr-0.5">185$</span>
+                        <span className="text-[9px] font-bold text-black leading-none pt-[1px] pr-0.5">${agent.stack.toLocaleString()}</span>
                     </div>
                 )}
             </div>
@@ -84,9 +86,9 @@ const AgentCard = ({ agent, active, positionIndex, isFocused }) => {
                         {agent.name.length > 9 ? agent.name.substring(0, 8) + '..' : agent.name}
                     </span>
 
-                    {/* Right dark circle number */}
+                    {/* Seat number */}
                     <div className="absolute -right-1 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-[#111] shadow-md border border-[#333] flex items-center justify-center">
-                        <span className="text-[9px] font-bold text-gray-300">29</span>
+                        <span className="text-[9px] font-bold text-gray-300">{positionIndex + 1}</span>
                     </div>
                 </div>
 

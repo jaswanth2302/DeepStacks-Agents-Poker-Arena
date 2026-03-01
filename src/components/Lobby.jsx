@@ -1,97 +1,52 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { Play, Cpu, Eye, Terminal, ChevronRight, Radio, Zap, ArrowLeft } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { convertCard } from '../lib/poker';
 
-// ── DATA ──────────────────────────────────────────────────────────────────────
-const FEATURE_MATCH = {
-    id: 'match-feature',
-    name: "High Stakes Alpha",
-    subtitle: "FEATURED BROADCAST",
-    stakes: "5/10 BB",
-    playerCount: 6,
-    maxPlayers: 6,
-    type: "No Limit Hold'em",
-    status: "LIVE",
-    spectators: 1240,
-    pot: "$42,500",
-    accentColor: "#f8312f",
-    agents: [
-        { name: "AlphaBot-7", stack: "$12,400", action: "RAISE" },
-        { name: "NeuralBluff", stack: "$8,200", action: "FOLD" },
-        { name: "GTO-X3", stack: "$15,100", action: "CALL" },
-        { name: "Exploit-V2", stack: "$6,800", action: "CHECK" },
-        { name: "DeepStack-v3", stack: "$21,000", action: "BET" },
-        { name: "RandBot-9", stack: "$4,000", action: "FOLD" },
-    ],
-};
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+const ACCENT_COLORS = ['#f8312f', '#10b981', '#facc15', '#a78bfa', '#f97316', '#06b6d4'];
 
-const REGULAR_MATCHES = [
-    {
-        id: 'match-2',
-        name: "GTO Sandbox",
-        stakes: "1/2 BB",
-        playerCount: 4,
-        maxPlayers: 6,
+const MATCH_TYPE_MAX = { heads_up: 2, '3max': 3, '6max': 6 };
+
+function mapSession(session, agentsMap, agentLastActions, idx) {
+    const isLive = ['playing', 'waiting_for_action'].includes(session.status);
+    const maxPlayers = MATCH_TYPE_MAX[session.match_type] || 6;
+
+    // Resolve seated agents from player_ids only — no fallback to random agents
+    const playerIds = session.player_ids && session.player_ids.length > 0
+        ? session.player_ids
+        : [];
+    const sessionAgents = playerIds
+        .map(id => agentsMap[id])
+        .filter(Boolean)
+        .slice(0, maxPlayers);
+
+    return {
+        id: session.id,
+        name: 'Live Arena',
+        subtitle: 'FEATURED BROADCAST',
+        stakes: '1/2 BB',
+        playerCount: sessionAgents.length,
+        maxPlayers,
         type: "No Limit Hold'em",
-        status: "LIVE",
-        spectators: 432,
-        pot: "$8,200",
-        accentColor: "#10b981",
-    },
-    {
-        id: 'match-3',
-        name: "Exploitative Testing",
-        stakes: "10/20 BB",
-        playerCount: 6,
-        maxPlayers: 6,
-        type: "Pot Limit Omaha",
-        status: "STARTING",
-        spectators: 89,
-        pot: "$112,000",
-        accentColor: "#facc15",
-    },
-    {
-        id: 'match-4',
-        name: "Heads Up Showdown",
-        stakes: "50/100 BB",
-        playerCount: 2,
-        maxPlayers: 2,
-        type: "No Limit Hold'em",
-        status: "LIVE",
-        spectators: 788,
-        pot: "$287,400",
-        accentColor: "#a78bfa",
-    },
-    {
-        id: 'match-5',
-        name: "Low Variance Lab",
-        stakes: "0.5/1 BB",
-        playerCount: 3,
-        maxPlayers: 6,
-        type: "No Limit Hold'em",
-        status: "LIVE",
-        spectators: 58,
-        pot: "$1,800",
-        accentColor: "#10b981",
-    },
-    {
-        id: 'match-6',
-        name: "Neural Bluff Trials",
-        stakes: "25/50 BB",
-        playerCount: 5,
-        maxPlayers: 6,
-        type: "No Limit Hold'em",
-        status: "LIVE",
-        spectators: 309,
-        pot: "$68,900",
-        accentColor: "#f8312f",
-    },
-];
+        status: isLive ? 'LIVE' : 'STARTING',
+        spectators: 0,
+        pot: `$${(session.pot_amount || 0).toLocaleString()}`,
+        accentColor: ACCENT_COLORS[idx % ACCENT_COLORS.length],
+        boardCards: (session.board_cards || []).map(convertCard).filter(Boolean),
+        agents: sessionAgents.map(a => ({
+            name: a.name,
+            stack: `$${(a.balance || 0).toLocaleString()}`,
+            action: (agentLastActions[a.id] || 'WAIT').toUpperCase(),
+        })),
+    };
+}
 
 // ── SUB-COMPONENTS ─────────────────────────────────────────────────────────────
 
 /** Animated mini poker table (pure CSS/SVG) */
-const MiniPokerTable = ({ agents, accentColor }) => (
+const MiniPokerTable = ({ agents, accentColor, boardCards = [] }) => (
     <div className="relative w-full h-full flex items-center justify-center">
         {/* Felt table */}
         <div
@@ -101,8 +56,13 @@ const MiniPokerTable = ({ agents, accentColor }) => (
         {/* Community cards area */}
         <div className="absolute flex gap-1.5 z-10">
             {[0, 1, 2, 3, 4].map(i => (
-                <div key={i} className="w-7 h-10 rounded bg-white/90 shadow-md border border-gray-200 flex items-center justify-center text-[10px] font-bold text-gray-700">
-                    {['A♠', 'K♥', 'Q♦', 'J♣', '10♠'][i]}
+                <div key={i} className="w-7 h-10 rounded shadow-md border flex items-center justify-center text-[10px] font-bold"
+                    style={boardCards[i]
+                        ? { backgroundColor: '#fff', borderColor: '#e5e7eb', color: ['♥','♦'].some(s => boardCards[i].includes(s)) ? '#dc2626' : '#111' }
+                        : { backgroundColor: '#1a1c29', borderColor: '#333', color: 'transparent' }
+                    }
+                >
+                    {boardCards[i] || '·'}
                 </div>
             ))}
         </div>
@@ -215,7 +175,7 @@ const FeatureMatchCard = ({ match, onJoin }) => (
                     <span className="text-[9px] font-mono text-gray-400 tracking-widest uppercase">Live View</span>
                 </div>
                 <div className="w-full h-[260px]">
-                    <MiniPokerTable agents={match.agents} accentColor={match.accentColor} />
+                    <MiniPokerTable agents={match.agents} accentColor={match.accentColor} boardCards={match.boardCards} />
                 </div>
                 {/* Agent list overlay */}
                 <div className="absolute bottom-4 left-4 right-4 flex flex-wrap gap-1.5">
@@ -313,6 +273,99 @@ const MatchCard = ({ match, idx, onJoin }) => (
 
 // ── MAIN COMPONENT ─────────────────────────────────────────────────────────────
 const Lobby = ({ onJoinMatch, onBack }) => {
+    const [sessions, setSessions] = useState([]);
+    const [agentsMap, setAgentsMap] = useState({}); // { [agentId]: agentRecord }
+    const [agentLastActions, setAgentLastActions] = useState({});
+    const [loading, setLoading] = useState(true);
+    // Debounce ref: prevents rapid concurrent fetchData calls from Realtime events
+    const fetchTimerRef = useRef(null);
+
+    const fetchData = useCallback(async () => {
+        // Only show sessions updated in the last 5 minutes — prevents stale
+        // sessions from previous engine runs from appearing as "live"
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const { data: sessionData } = await supabase
+            .from('game_sessions')
+            .select('*')
+            .in('status', ['playing', 'waiting_for_action', 'showdown'])
+            .gt('updated_at', fiveMinAgo)
+            .order('updated_at', { ascending: false })
+            .limit(6);
+
+        // Resolve agents FIRST so we can filter out sessions with zero live agents
+        const allPlayerIds = [
+            ...new Set((sessionData || []).flatMap(s => s.player_ids || [])),
+        ];
+
+        let map = {};
+        if (allPlayerIds.length > 0) {
+            const { data: agentData } = await supabase
+                .from('agents')
+                .select('id, name, personality_type, balance, avatar_url')
+                .in('id', allPlayerIds);
+
+            for (const a of agentData || []) map[a.id] = a;
+        }
+        setAgentsMap(map);
+
+        // Only keep sessions that have at least 1 resolved agent — prevents
+        // stale/orphaned sessions from showing with "0/6" agents and ghost pots
+        const liveSessions = (sessionData || []).filter(s => {
+            const ids = s.player_ids || [];
+            return ids.length > 0 && ids.some(id => map[id]);
+        });
+        setSessions(liveSessions);
+
+        // Seed last actions from the most recent session's logs
+        if (sessionData && sessionData.length > 0) {
+            const { data: logData } = await supabase
+                .from('game_logs')
+                .select('agent_id, action')
+                .eq('game_id', sessionData[0].id)
+                .neq('action', 'deal')
+                .order('created_at', { ascending: false })
+                .limit(30);
+
+            if (logData) {
+                const actions = {};
+                for (const log of logData) {
+                    if (!actions[log.agent_id]) actions[log.agent_id] = log.action;
+                }
+                setAgentLastActions(actions);
+            }
+        }
+
+        setLoading(false);
+    }, []);
+
+    useEffect(() => {
+        fetchData();
+
+        const debouncedFetch = () => {
+            clearTimeout(fetchTimerRef.current);
+            fetchTimerRef.current = setTimeout(fetchData, 300);
+        };
+
+        const channel = supabase
+            .channel('lobby_feed')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'game_sessions' }, debouncedFetch)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'game_logs' }, (payload) => {
+                const log = payload.new;
+                if (log.action === 'deal') return;
+                setAgentLastActions(prev => ({
+                    ...prev,
+                    [log.agent_id]: log.action,
+                }));
+            })
+            .subscribe();
+
+        return () => supabase.removeChannel(channel);
+    }, [fetchData]);
+
+    const [featuredSession, ...otherSessions] = sessions;
+    const featuredMatch = featuredSession ? mapSession(featuredSession, agentsMap, agentLastActions, 0) : null;
+    const regularMatches = otherSessions.map((s, i) => mapSession(s, agentsMap, agentLastActions, i + 1));
+
     return (
         <div className="h-full w-full bg-[#080808] overflow-y-auto relative">
             {/* Subtle background texture */}
@@ -334,7 +387,7 @@ const Lobby = ({ onJoinMatch, onBack }) => {
                     <div className="flex items-center gap-2 mb-3">
                         <div className="w-1.5 h-1.5 rounded-full bg-[#f8312f] animate-pulse" />
                         <span className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">
-                            {REGULAR_MATCHES.length + 1} active matches · real-time
+                            {loading ? 'connecting…' : `${sessions.length} active ${sessions.length === 1 ? 'match' : 'matches'} · real-time`}
                         </span>
                     </div>
                     <h1 className="text-3xl font-black text-white tracking-tight">Arena Overview</h1>
@@ -343,30 +396,47 @@ const Lobby = ({ onJoinMatch, onBack }) => {
                     </p>
                 </header>
 
+                {/* Engine offline / loading state */}
+                {!loading && sessions.length === 0 && (
+                    <section className="bg-[#0d0d0d] border border-white/5 rounded-2xl p-12 flex flex-col items-center gap-4 text-center">
+                        <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center">
+                            <Radio className="w-5 h-5 text-gray-600" />
+                        </div>
+                        <div>
+                            <p className="text-white font-bold mb-1">No active matches</p>
+                            <p className="text-gray-600 text-sm">The game engine is offline. Check back shortly.</p>
+                        </div>
+                    </section>
+                )}
+
                 {/* Feature Match */}
-                <section>
-                    <div className="flex items-center gap-2 mb-4">
-                        <Radio className="w-3.5 h-3.5 text-[#f8312f]" />
-                        <span className="text-xs font-mono text-gray-500 uppercase tracking-widest">Featured Broadcast</span>
-                    </div>
-                    <FeatureMatchCard match={FEATURE_MATCH} onJoin={onJoinMatch} />
-                </section>
+                {featuredMatch && (
+                    <section>
+                        <div className="flex items-center gap-2 mb-4">
+                            <Radio className="w-3.5 h-3.5 text-[#f8312f]" />
+                            <span className="text-xs font-mono text-gray-500 uppercase tracking-widest">Featured Broadcast</span>
+                        </div>
+                        <FeatureMatchCard match={featuredMatch} onJoin={onJoinMatch} />
+                    </section>
+                )}
 
                 {/* Regular Match Grid */}
-                <section>
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
-                            <span className="text-xs font-mono text-gray-500 uppercase tracking-widest">All Live Matches</span>
+                {regularMatches.length > 0 && (
+                    <section>
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
+                                <span className="text-xs font-mono text-gray-500 uppercase tracking-widest">All Live Matches</span>
+                            </div>
+                            <span className="text-[10px] font-mono text-gray-600">{regularMatches.length} matches</span>
                         </div>
-                        <span className="text-[10px] font-mono text-gray-600">{REGULAR_MATCHES.length} matches</span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {REGULAR_MATCHES.map((match, i) => (
-                            <MatchCard key={match.id} match={match} idx={i} onJoin={onJoinMatch} />
-                        ))}
-                    </div>
-                </section>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {regularMatches.map((match, i) => (
+                                <MatchCard key={match.id} match={match} idx={i} onJoin={onJoinMatch} />
+                            ))}
+                        </div>
+                    </section>
+                )}
 
                 {/* Deploy Your Agent Section */}
                 <section className="bg-[#0d0d0d] border border-white/5 rounded-2xl p-8 relative overflow-hidden">

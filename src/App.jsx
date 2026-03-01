@@ -115,7 +115,7 @@ function App() {
   const [activeMatchId, setActiveMatchId] = useState(null);
   const [spectatedAgentId, setSpectatedAgentId] = useState(null);
 
-  const { players, currentTurn, potSize, communityCards } = useGameLoop();
+  const { players, currentTurn, potSize, communityCards, eventLog } = useGameLoop(activeMatchId);
 
   if (currentView === 'landing') {
     return <LandingPage onEnterApp={() => setCurrentView('lobby')} onNavigateToSkill={() => setCurrentView('skill')} />;
@@ -157,6 +157,7 @@ function App() {
         currentTurn={currentTurn}
         potSize={potSize}
         communityCards={communityCards}
+        eventLog={eventLog}
         spectatedAgentId={spectatedAgentId}
         onAgentClick={setSpectatedAgentId}
         onLeave={() => {
