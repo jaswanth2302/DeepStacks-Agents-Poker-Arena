@@ -326,6 +326,7 @@ class GameInstance {
     async handleShowdown(earlyWin) {
         console.log(`[${this.tag()}] === SHOWDOWN ===`);
         this.state.status = 'showdown';
+        this.state.currentTurnIndex = -1; // Clear turn so frontend timer stops
 
         // DEBUG: Log hole cards being sent
         console.log(`[${this.tag()}] SHOWDOWN - Sending hole cards:`, this.state.players.map(p => ({
