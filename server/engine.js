@@ -12,6 +12,30 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ── JSON Error Handler (for AI agents) ──────────────────────────────────────
+// Must come BEFORE express.json() to catch parsing errors
+app.use((err, req, res, next) => {
+    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+        console.error(`[API] Invalid JSON received: ${err.message}`);
+        return res.status(400).json({
+            error: 'Invalid JSON format in request body',
+            message: 'The JSON you sent is malformed. Common issues: missing quotes around keys, trailing commas, or sending form-data instead of JSON.',
+            expected_format: req.path === '/register'
+                ? '{"agent_name":"YourBotName"}'
+                : req.path === '/action'
+                ? '{"action":"call","amount":200,"thought_process":"optional reasoning"}'
+                : '{}',
+            how_to_fix: [
+                '1. Ensure Content-Type header is "application/json"',
+                '2. Use double quotes for both keys and values',
+                '3. Validate JSON syntax before sending',
+                `4. Example curl: curl -X POST ${req.protocol}://${req.get('host')}${req.path} -H "Content-Type: application/json" -d '{"agent_name":"BotName"}'`
+            ]
+        });
+    }
+    next();
+});
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../dist')));
 
@@ -644,8 +668,41 @@ function findTableForAgent(agentId) {
 // Register a new agent — returns api_token for all future requests
 app.post('/register', async (req, res) => {
     const { agent_name } = req.body;
-    if (!agent_name || typeof agent_name !== 'string' || agent_name.trim().length === 0) {
-        return res.status(400).json({ error: 'agent_name is required' });
+
+    // Enhanced validation with helpful error messages for AI agents
+    if (!req.body || Object.keys(req.body).length === 0) {
+        return res.status(400).json({
+            error: 'Empty request body',
+            message: 'No JSON data received. Did you forget to include the request body?',
+            expected_format: '{"agent_name":"YourBotName"}',
+            example_curl: `curl -X POST ${req.protocol}://${req.get('host')}/register -H "Content-Type: application/json" -d '{"agent_name":"MyBot"}'`
+        });
+    }
+
+    if (!agent_name) {
+        return res.status(400).json({
+            error: 'Missing agent_name field',
+            message: 'The "agent_name" field is required in the JSON body',
+            received_fields: Object.keys(req.body),
+            expected_format: '{"agent_name":"YourBotName"}',
+            tip: 'Make sure you\'re using "agent_name" (not "name" or "agentName")'
+        });
+    }
+
+    if (typeof agent_name !== 'string') {
+        return res.status(400).json({
+            error: 'Invalid agent_name type',
+            message: `agent_name must be a string, received ${typeof agent_name}`,
+            expected_format: '{"agent_name":"YourBotName"}'
+        });
+    }
+
+    if (agent_name.trim().length === 0) {
+        return res.status(400).json({
+            error: 'Empty agent_name',
+            message: 'agent_name cannot be empty or whitespace only',
+            expected_format: '{"agent_name":"YourBotName"}'
+        });
     }
 
     const trimmedName = agent_name.trim();
@@ -686,7 +743,19 @@ app.post('/register', async (req, res) => {
 // Join the matchmaking queue
 app.post('/join-queue', async (req, res) => {
     const agent = await authenticateAgent(req);
-    if (!agent) return res.status(401).json({ error: 'Missing or invalid Bearer token' });
+    if (!agent) {
+        return res.status(401).json({
+            error: 'Authentication failed',
+            message: 'Missing or invalid API token',
+            how_to_fix: [
+                '1. Make sure you called POST /register first to get an api_token',
+                '2. Include the token in the Authorization header',
+                '3. Format: "Authorization: Bearer YOUR_API_TOKEN"',
+                '4. Example: curl -H "Authorization: Bearer abc-123-xyz" ...'
+            ],
+            tip: 'Did you save the api_token from the /register response?'
+        });
+    }
 
     // Auto-rebuy: if agent is broke, reset balance to starting stack
     const STARTING_STACK = 10000;
@@ -807,9 +876,27 @@ app.post('/action', async (req, res) => {
     }
 
     const { action, amount, thought_process } = req.body;
+
+    // Enhanced validation for AI agents
+    if (!action) {
+        return res.status(400).json({
+            error: 'Missing action field',
+            message: 'The "action" field is required in the JSON body',
+            valid_actions: ['fold', 'check', 'call', 'raise'],
+            expected_format: '{"action":"call","amount":200,"thought_process":"optional"}',
+            tip: 'Use "fold" to fold, "check" when no bet, "call" to match bet, "raise" with amount to raise'
+        });
+    }
+
     const validActions = ['fold', 'call', 'raise', 'check'];
     if (!validActions.includes(action)) {
-        return res.status(400).json({ error: `Invalid action. Must be one of: ${validActions.join(', ')}` });
+        return res.status(400).json({
+            error: 'Invalid action',
+            message: `"${action}" is not a valid action`,
+            valid_actions: validActions,
+            received: action,
+            tip: 'Action must be lowercase: "fold", "check", "call", or "raise"'
+        });
     }
 
     // Validate action legality
