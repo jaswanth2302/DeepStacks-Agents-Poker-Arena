@@ -1,6 +1,14 @@
+import { useState, useEffect, useRef } from 'react';
 import AgentCard from './AgentCard';
 import PlayingCard from './PlayingCard';
 import SpectatorBetting from './SpectatorBetting';
+import PotCounter from './Animations/PotCounter';
+import BettingAnimation from './Animations/BettingAnimation';
+import CommunityCardReveal from './Animations/CommunityCardReveal';
+// ShowdownReveal removed - using simple card flip instead
+import RoundTransition from './Animations/RoundTransition';
+import DynamicPotChips from './Animations/DynamicPotChips';
+import { usePlayerPositions, getPotPosition } from '../hooks/usePlayerPositions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Send, Activity, Cpu, Zap } from 'lucide-react';
 
@@ -23,12 +31,138 @@ function formatLogEntry(entry) {
     return { name, action, amt };
 }
 
-const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = [], spectatedAgentId, onAgentClick, onLeave }) => {
+const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = [], spectatedAgentId, onAgentClick, onLeave, sessionStatus }) => {
     // Find where the spectated agent is in the array
     const spectatedIndex = players.findIndex(p => p.id === spectatedAgentId);
 
     // We want the spectated agent to be at ovalPositions index 3 (bottom center)
     const offset = spectatedIndex !== -1 ? (3 - spectatedIndex + players.length) % players.length : 0;
+
+    // Animation state
+    const [bettingChips, setBettingChips] = useState([]);
+    const [previousCardCount, setPreviousCardCount] = useState(0);
+    const [showRoundTransition, setShowRoundTransition] = useState(false);
+    const [transitionMessage, setTransitionMessage] = useState('');
+    const [showdownWinner, setShowdownWinner] = useState(null);
+    const [previousPotSize, setPreviousPotSize] = useState(0);
+    const [turnTimeLeft, setTurnTimeLeft] = useState(30);
+
+    // Player positions for animations
+    const playerPositions = usePlayerPositions(players, spectatedAgentId);
+    const potPosition = getPotPosition();
+
+    // Track previous event log to detect new bets
+    const prevEventLogRef = useRef([]);
+    const prevSessionStatusRef = useRef(null);
+    const prevWinEventIdRef = useRef(null);
+    const hasInitializedCardCount = useRef(false);
+
+    // Initialize previousCardCount on mount to avoid "DEALING..." showing for existing cards
+    useEffect(() => {
+        if (!hasInitializedCardCount.current && communityCards.length > 0) {
+            console.log('[PokerTable] Initializing previousCardCount to', communityCards.length, '(cards already on table)');
+            setPreviousCardCount(communityCards.length);
+            hasInitializedCardCount.current = true;
+        }
+    }, [communityCards.length]);
+
+    // Detect new betting actions and trigger chip animations
+    useEffect(() => {
+        if (eventLog.length === 0) return;
+
+        const latestEvent = eventLog[eventLog.length - 1];
+        const prevEvents = prevEventLogRef.current;
+
+        // Check if this is a new event
+        if (prevEvents.length > 0 && latestEvent.id === prevEvents[prevEvents.length - 1]?.id) {
+            return;
+        }
+
+        // Trigger betting animation for raise/call/blind
+        if (['raise', 'call', 'small_blind', 'big_blind'].includes(latestEvent.action)) {
+            const playerPos = playerPositions[latestEvent.agent_id];
+            if (playerPos && latestEvent.amount > 0) {
+                setBettingChips([{
+                    playerId: latestEvent.agent_id,
+                    amount: latestEvent.amount,
+                    position: playerPos,
+                }]);
+            }
+        }
+
+        prevEventLogRef.current = eventLog;
+    }, [eventLog, playerPositions]);
+
+    // Track community card changes for reveal animations
+    // Don't auto-update previousCardCount here - let the animation component handle it
+    // We just track the current count for comparison
+
+    // Detect showdown and round transitions - SIMPLIFIED
+    useEffect(() => {
+        // Detect when a winner is announced (win action in event log)
+        if (eventLog.length > 0) {
+            const latestEvent = eventLog[eventLog.length - 1];
+
+            // Check if latest event is a win and we haven't shown this specific win yet
+            if (latestEvent.action === 'win' && latestEvent.id !== prevWinEventIdRef.current) {
+                const winner = players.find(p => p.id === latestEvent.agent_id);
+
+                // Determine if this is a SHOWDOWN win (river reached)
+                const isShowdown = communityCards.length === 5;
+
+                if (winner && isShowdown) {
+                    // Mark this win event as shown
+                    prevWinEventIdRef.current = latestEvent.id;
+
+                    // Just set the winner ID so AgentCard can show the golden ring
+                    setShowdownWinner({ id: winner.id, name: winner.name });
+                }
+            }
+        }
+
+        // Detect round transitions (pot reset means new hand starts)
+        if (potSize === 0 && previousPotSize > 0) {
+            // Clear showdown winner when new hand starts
+            setShowdownWinner(null);
+            setPreviousCardCount(0);
+        }
+
+        prevSessionStatusRef.current = sessionStatus;
+        setPreviousPotSize(potSize);
+    }, [eventLog, potSize, players, communityCards, sessionStatus, previousPotSize, showdownWinner]);
+
+    // Get current turn player name for indicator
+    const currentTurnPlayer = players.find(p => p.id === currentTurn);
+
+    // Countdown timer for current turn
+    useEffect(() => {
+        if (!currentTurn) {
+            setTurnTimeLeft(30);
+            return;
+        }
+
+        // Reset timer when turn changes
+        setTurnTimeLeft(30);
+
+        const interval = setInterval(() => {
+            setTurnTimeLeft((prev) => {
+                if (prev <= 1) {
+                    clearInterval(interval);
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [currentTurn]);
+
+    // Build game state object
+    const gameState = {
+        pot: potSize,
+        round: 'flop', // TODO: Get actual round from game state
+        status: players.length > 0 ? 'playing' : 'waiting',
+    };
 
     return (
         <main className="flex-1 absolute inset-0 flex items-center justify-center p-8 overflow-hidden z-0 bg-neutral-950 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')]">
@@ -93,27 +227,12 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = 
 
                                     {/* Center Pot Chips stack + live pot amount */}
                                     <div className="flex flex-col items-center gap-2">
-                                        <div className="flex gap-0.5 relative translate-y-2">
-                                            <div className="relative w-5 h-8">
-                                                {[...Array(5)].map((_, i) => (
-                                                    <div key={i} className="absolute bottom-0 w-5 h-2 bg-slate-800 rounded-full border border-slate-600 shadow-[0_2px_0_#0f172a]" style={{ bottom: `${i * 3}px`, zIndex: i }}></div>
-                                                ))}
-                                            </div>
-                                            <div className="relative w-5 h-6">
-                                                {[...Array(3)].map((_, i) => (
-                                                    <div key={i} className="absolute bottom-0 w-5 h-2 bg-red-600 rounded-full border border-red-500 shadow-[0_2px_0_#7f1d1d]" style={{ bottom: `${i * 3}px`, zIndex: i }}></div>
-                                                ))}
-                                            </div>
-                                            <div className="relative w-5 h-4">
-                                                {[...Array(2)].map((_, i) => (
-                                                    <div key={i} className="absolute bottom-0 w-5 h-2 bg-yellow-500 rounded-full border border-yellow-400 shadow-[0_2px_0_#92400e]" style={{ bottom: `${i * 3}px`, zIndex: i }}></div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        {/* Live pot amount */}
+                                        {/* Dynamic chip stacks based on pot amount */}
+                                        <DynamicPotChips potAmount={potSize || 0} />
+
+                                        {/* Live pot amount - ANIMATED */}
                                         <div className="mt-3 px-3 py-0.5 bg-black/50 rounded-full border border-white/10">
-                                            <span className="font-mono text-[11px] text-white/60 uppercase tracking-widest">Pot </span>
-                                            <span className="font-mono text-[11px] font-bold text-white">${(potSize || 0).toLocaleString()}</span>
+                                            <PotCounter amount={potSize || 0} />
                                         </div>
                                     </div>
                                 </div>
@@ -127,7 +246,7 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = 
                 <div className="absolute top-1/2 left-1/2 w-[1px] h-[1px] pointer-events-none">
                     {players.map((agent, index) => {
                         const ovalPositions = [
-                            { x: 0, y: -240 }, // 0 top
+                            { x: 0, y: -200 }, // 0 top (moved down from -240 to avoid cutoff)
                             { x: 360, y: -120 }, // 1 top-right
                             { x: 360, y: 120 }, // 2 bottom-right
                             { x: 0, y: 240 }, // 3 bottom center (hero)
@@ -154,6 +273,10 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = 
                                     active={active}
                                     isFocused={isFocused}
                                     positionIndex={targetPositionIndex}
+                                    timeLeft={active ? turnTimeLeft : null}
+                                    timeLimit={30}
+                                    showdown={!!showdownWinner}
+                                    isWinner={showdownWinner?.name === agent.name}
                                 />
                             </motion.div>
                         );
@@ -165,9 +288,9 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = 
             {/* Transparent Spectator Chat Box (Bottom Left) */}
             <div className={`absolute ${spectatedAgentId ? 'bottom-16' : 'bottom-6'} left-6 w-80 flex flex-col pointer-events-auto z-50 transition-all duration-300`}>
                 {/* Chat Messages */}
-                <div className="flex-1 bg-black/40 backdrop-blur-md border border-white/10 rounded-t-lg p-3 flex flex-col justify-end overflow-hidden space-y-2 h-48 relative shadow-lg">
-                    {/* Top gradient for fading out chat content */}
-                    <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-[#0f0f0f]/90 to-transparent pointer-events-none z-10 rounded-t-lg" />
+                <div className="flex-1 bg-transparent border border-white/10 rounded-t-lg p-3 flex flex-col justify-end overflow-hidden space-y-2 h-48 relative shadow-lg">
+                    {/* Top gradient for fading out chat content - DISABLED for transparency */}
+                    {/* <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-[#0f0f0f]/90 to-transparent pointer-events-none z-10 rounded-t-lg" /> */}
 
                     <div className="relative z-0 space-y-2 pb-1">
                         {eventLog.length === 0 ? (
@@ -187,7 +310,7 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = 
                     </div>
                 </div>
                 {/* Chat Input */}
-                <div className="bg-black/60 backdrop-blur-md border border-white/20 border-t-0 rounded-b-lg p-2 flex gap-2 items-center shadow-lg">
+                <div className="bg-transparent border border-white/20 border-t-0 rounded-b-lg p-2 flex gap-2 items-center shadow-lg">
                     <MessageSquare className="w-3.5 h-3.5 text-gray-500 ml-1" />
                     <input
                         type="text"
@@ -213,6 +336,30 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = 
                     </div>
                 </div>
             </div>
+
+            {/* ─── Animation Overlays ─── */}
+            {/* Betting Chips Animation */}
+            <BettingAnimation
+                bets={bettingChips}
+                potPosition={potPosition}
+                onComplete={() => setBettingChips([])}
+            />
+
+            {/* Community Card Reveal Indicator */}
+            <CommunityCardReveal
+                previousCount={previousCardCount}
+                currentCount={communityCards.length}
+                onRevealComplete={() => setPreviousCardCount(communityCards.length)}
+            />
+
+
+            {/* Showdown - cards flip on agents, winner gets golden ring */}
+
+            {/* Round Transition Overlay */}
+            <RoundTransition
+                message={transitionMessage}
+                visible={showRoundTransition}
+            />
 
             {/* ─── Agent Focus HUD Strip ─── */}
             <AnimatePresence>

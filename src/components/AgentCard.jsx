@@ -3,32 +3,66 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Terminal, Activity } from 'lucide-react';
 import PlayingCard from './PlayingCard';
 
-const AgentCard = ({ agent, active, positionIndex, isFocused }) => {
+const AgentCard = ({ agent, active, positionIndex, isFocused, timeLeft, timeLimit = 30, showdown = false, isWinner = false }) => {
 
     // Scale up the bottom-center seat for visual focus.
     // Only show face-up cards if we actually have hole card data (never in spectator mode).
     const isBottomSeat = positionIndex === 3;
     const isHero = isBottomSeat && agent.holeCards?.length >= 2;
 
+    // During showdown, show all players' cards face-up
+    const shouldShowCards = isHero || (showdown && agent.holeCards?.length >= 2);
+
+    // DEBUG: Log showdown state
+    if (showdown && positionIndex === 0) {
+        console.log('[AgentCard] SHOWDOWN MODE - agent:', agent.name, 'holeCards:', agent.holeCards, 'shouldShowCards:', shouldShowCards);
+    }
+
+    // Calculate thinking indicator properties
+    const isThinking = active && timeLeft != null;
+    const percentage = isThinking ? (timeLeft / timeLimit) * 100 : 100;
+    const isUrgent = timeLeft <= 5;
+    const isWarning = timeLeft <= 15 && timeLeft > 5;
+
     return (
         <div className={`relative flex flex-col items-center justify-center w-36 ${isBottomSeat ? 'scale-[1.15]' : ''}`}>
 
             {/* Fanned Cards (Behind avatar) */}
             <div className="absolute top-[-30px] w-full flex justify-center items-end z-0">
-                {isHero ? (
-                    // Hero Cards (Face up) — uses agent.holeCards if available
+                {shouldShowCards ? (
+                    // Face-up Cards (Hero OR Showdown) — uses agent.holeCards if available
                     <div className="relative w-full flex justify-center">
                         <motion.div
-                            initial={{ rotateZ: -10, x: 5, y: 10 }}
-                            animate={{ rotateZ: -12, x: 8, y: 5 }}
+                            initial={{ rotateZ: -10, x: 5, y: 10, rotateY: showdown && !isHero ? 180 : 0 }}
+                            animate={{
+                                rotateZ: -12,
+                                x: 8,
+                                y: 5,
+                                rotateY: 0
+                            }}
+                            transition={{
+                                rotateY: { duration: 0.4, ease: 'easeInOut' },
+                                default: { duration: 0.3 }
+                            }}
                             className="absolute -left-1"
+                            style={{ transformStyle: 'preserve-3d' }}
                         >
                             <PlayingCard card={agent.holeCards[0]} width={45} height={65} animate={false} />
                         </motion.div>
                         <motion.div
-                            initial={{ rotateZ: 10, x: -5, y: 10 }}
-                            animate={{ rotateZ: 12, x: -8, y: 5 }}
+                            initial={{ rotateZ: 10, x: -5, y: 10, rotateY: showdown && !isHero ? 180 : 0 }}
+                            animate={{
+                                rotateZ: 12,
+                                x: -8,
+                                y: 5,
+                                rotateY: 0
+                            }}
+                            transition={{
+                                rotateY: { duration: 0.4, ease: 'easeInOut', delay: 0.05 },
+                                default: { duration: 0.3 }
+                            }}
                             className="absolute -right-1"
+                            style={{ transformStyle: 'preserve-3d' }}
                         >
                             <PlayingCard card={agent.holeCards[1]} width={45} height={65} animate={false} />
                         </motion.div>
@@ -47,11 +81,84 @@ const AgentCard = ({ agent, active, positionIndex, isFocused }) => {
                 )}
             </div>
 
+            {/* Thinking Indicator Badge (Above Avatar) */}
+            <AnimatePresence>
+                {isThinking && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        className="absolute top-[-50px] left-1/2 -translate-x-1/2 z-30"
+                    >
+                        <div className="bg-black/90 backdrop-blur-md px-3 py-1 rounded-lg border border-white/20 flex items-center gap-2 shadow-xl">
+                            {/* Circular countdown */}
+                            <div className="relative w-5 h-5">
+                                <svg className="w-full h-full -rotate-90">
+                                    <circle
+                                        cx="10"
+                                        cy="10"
+                                        r="8"
+                                        fill="none"
+                                        stroke="rgba(255,255,255,0.1)"
+                                        strokeWidth="2"
+                                    />
+                                    <circle
+                                        cx="10"
+                                        cy="10"
+                                        r="8"
+                                        fill="none"
+                                        stroke={isUrgent ? '#ef4444' : isWarning ? '#facc15' : '#10b981'}
+                                        strokeWidth="2"
+                                        strokeDasharray={`${2 * Math.PI * 8}`}
+                                        strokeDashoffset={`${2 * Math.PI * 8 * (1 - percentage / 100)}`}
+                                        className="transition-all duration-1000 linear"
+                                    />
+                                </svg>
+                                <div
+                                    className={`absolute inset-0 flex items-center justify-center text-[9px] font-bold ${
+                                        isUrgent ? 'text-red-400' : isWarning ? 'text-yellow-400' : 'text-emerald-400'
+                                    }`}
+                                >
+                                    {timeLeft}
+                                </div>
+                            </div>
+                            {/* Thinking text */}
+                            <span className="text-[10px] text-white font-semibold whitespace-nowrap">
+                                Thinking...
+                            </span>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* Avatar Circle */}
             <div className="relative z-10 w-[72px] h-[72px] rounded-full border-2 border-[#111] shadow-[0_5px_15px_rgba(0,0,0,0.6)] bg-gradient-to-b from-[#253238] to-[#102027] flex items-center justify-center text-4xl mb-6">
 
-                {/* Active glow ring */}
-                {active && (
+                {/* Winner glow ring (golden) */}
+                {isWinner && showdown && (
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 0.6, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        className="absolute inset-[-6px] rounded-full border-[4px] border-yellow-400 shadow-[0_0_25px_rgba(234,179,8,0.6)] animate-pulse"
+                    />
+                )}
+
+                {/* Thinking glow ring (pulsing) */}
+                {isThinking && !showdown && (
+                    <div
+                        className={`absolute inset-[-6px] rounded-full border-[4px] animate-pulse shadow-[0_0_20px] ${
+                            isUrgent
+                                ? 'border-red-500 shadow-red-500'
+                                : isWarning
+                                ? 'border-yellow-400 shadow-yellow-400'
+                                : 'border-emerald-400 shadow-emerald-400'
+                        }`}
+                    />
+                )}
+
+                {/* Active glow ring (when not thinking) */}
+                {active && !isThinking && !showdown && (
                     <div className="absolute inset-[-4px] rounded-full border-[3px] border-[#4ade80] animate-pulse shadow-[0_0_15px_#4ade80]" />
                 )}
 

@@ -109,6 +109,8 @@ class GameInstance {
                     stack: p.stack,
                     currentBet: p.currentBet,
                     status: p.status,
+                    // Include hole cards during showdown for spectators to see
+                    holeCards: this.state.status === 'showdown' ? p.holeCards : undefined,
                 })),
             })
             .eq('id', this.sessionId);
@@ -214,9 +216,10 @@ class GameInstance {
         this.actionTimeoutObj = setTimeout(async () => {
             if (this.waitingForAction) {
                 this.waitingForAction = false;
-                console.log(`[${this.tag()}] [TIMEOUT] Auto-folding ${player.name} after ${timeoutMs / 1000}s`);
-                await this.writeActionLog(player.id, 'fold', 0, '[SYSTEM] Auto-fold due to timeout', 1.0);
-                await this.processPlayerAction('fold', 0);
+                console.log(`[${this.tag()}] [TIMEOUT] Removing ${player.name} from table after ${timeoutMs / 1000}s`);
+                await this.writeActionLog(player.id, 'timeout', 0, '[SYSTEM] Removed due to timeout', 1.0);
+                await this.removePlayer(player.id);
+                this.triggerNextActionRequest(); // Continue game with remaining players
             }
         }, timeoutMs);
     }
@@ -323,6 +326,13 @@ class GameInstance {
     async handleShowdown(earlyWin) {
         console.log(`[${this.tag()}] === SHOWDOWN ===`);
         this.state.status = 'showdown';
+
+        // DEBUG: Log hole cards being sent
+        console.log(`[${this.tag()}] SHOWDOWN - Sending hole cards:`, this.state.players.map(p => ({
+            name: p.name,
+            holeCards: p.holeCards
+        })));
+
         await this.updateDbSession();
 
         const activePlayers = this.state.players.filter(p => p.status === 'active');
@@ -356,7 +366,9 @@ class GameInstance {
             if (wPlayer) wPlayer.stack += award;
             winnerResults.push({ name: wPlayer?.name, hand: handName, amount_won: award });
             console.log(`[${this.tag()}] Winner: ${wPlayer?.name} $${award} — ${handName}`);
-            await this.writeActionLog(wId, 'win', award, `Won $${award} with ${handName}`, 1.0);
+            // Include hand name and hole cards in thought process for frontend parsing
+            const thoughtWithHand = `${handName}|||${JSON.stringify(wPlayer?.holeCards || [])}`;
+            await this.writeActionLog(wId, 'win', award, thoughtWithHand, 1.0);
         }
 
         // Store result so agents can poll it during the showdown window
@@ -372,7 +384,7 @@ class GameInstance {
             )
         );
 
-        await sleep(5000); // Let spectators see the result
+        await sleep(6500); // Let spectators see the full animation (5.5s animation + 1s buffer)
         queueManager.onTableDone(this.sessionId);
     }
 
@@ -465,11 +477,11 @@ const queueManager = {
             // Graduated timeout: more agents → launch sooner
             // 6+ agents → launch immediately
             // 4-5 agents → launch after 30s
-            // 2-3 agents → launch after 60s (give time for more to join)
+            // 2-3 agents → launch after 30s
             const shouldLaunch =
                 qLen >= 6 ||
                 (qLen >= 4 && waited >= 30_000) ||
-                (qLen >= 2 && waited >= 60_000);
+                (qLen >= 2 && waited >= 30_000);
 
             if (shouldLaunch) {
                 await this.launchTable(6);
@@ -545,8 +557,41 @@ const queueManager = {
             return;
         }
 
-        // Not enough players — mark session completed and destroy table
-        await supabase.from('game_sessions').update({ status: 'completed' }).eq('id', sessionId);
+        // Not enough players — mark session ended and destroy table
+        const winnerId = alive.length === 1 ? alive[0].id : null;
+
+        await supabase.from('game_sessions').update({
+            status: 'ended',
+            ended_at: new Date().toISOString(),
+            total_hands: instance.handNumber,
+            winner_id: winnerId
+        }).eq('id', sessionId);
+
+        // Update agent balances in database (persist final stacks)
+        for (const p of players) {
+            const { data: agentRecord } = await supabase
+                .from('agents')
+                .select('balance')
+                .eq('id', p.id)
+                .single();
+
+            if (agentRecord) {
+                // Calculate profit/loss for this match
+                const startingStack = 10000; // Default starting stack
+                const profitLoss = p.stack - startingStack;
+
+                await supabase
+                    .from('agents')
+                    .update({
+                        balance: p.stack,
+                        total_profit: (agentRecord.balance - startingStack) + profitLoss, // Cumulative profit
+                    })
+                    .eq('id', p.id);
+
+                console.log(`[Queue] Updated ${p.name} balance: ${p.stack} (${profitLoss >= 0 ? '+' : ''}${profitLoss})`);
+            }
+        }
+
         await instance.destroy();
 
         // Re-queue surviving agents (destroy first so enqueue check passes)
@@ -602,15 +647,38 @@ app.post('/register', async (req, res) => {
         return res.status(400).json({ error: 'agent_name is required' });
     }
 
+    const trimmedName = agent_name.trim();
+
+    // Check if agent with this name already exists
+    const { data: existingAgent } = await supabase
+        .from('agents')
+        .select('*')
+        .eq('name', trimmedName)
+        .maybeSingle();
+
+    if (existingAgent) {
+        // Agent exists - return existing credentials
+        console.log(`[Register] Agent "${trimmedName}" already exists, returning existing token`);
+        return res.json({
+            agent_id: existingAgent.id,
+            api_token: existingAgent.api_token,
+            name: existingAgent.name,
+            balance: existingAgent.balance,
+            message: 'Agent already registered, returning existing credentials'
+        });
+    }
+
+    // Create new agent
     const api_token = crypto.randomUUID();
     const { data, error } = await supabase
         .from('agents')
-        .insert([{ name: agent_name.trim(), api_token, balance: 10000, personality_type: 'default' }])
+        .insert([{ name: trimmedName, api_token, balance: 10000, personality_type: 'default' }])
         .select()
         .single();
 
     if (error) return res.status(500).json({ error: error.message });
 
+    console.log(`[Register] New agent registered: ${data.name} (${data.id.slice(0, 8)})`);
     res.json({ agent_id: data.id, api_token: data.api_token, name: data.name, balance: data.balance });
 });
 

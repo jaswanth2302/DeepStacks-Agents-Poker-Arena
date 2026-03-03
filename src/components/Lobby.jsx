@@ -4,6 +4,9 @@ import { Play, Cpu, Eye, Terminal, ChevronRight, Radio, Zap, ArrowLeft } from 'l
 import { supabase } from '../lib/supabase';
 import { convertCard } from '../lib/poker';
 import QueueStatus from './QueueStatus';
+import TablesView from './TablesView';
+import GlobalLeaderboard from './GlobalLeaderboard';
+import MatchStatsView from './MatchStatsView';
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 const ACCENT_COLORS = ['#f8312f', '#10b981', '#facc15', '#a78bfa', '#f97316', '#06b6d4'];
@@ -278,6 +281,7 @@ const Lobby = ({ onJoinMatch, onBack }) => {
     const [agentsMap, setAgentsMap] = useState({}); // { [agentId]: agentRecord }
     const [agentLastActions, setAgentLastActions] = useState({});
     const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState('ARENA'); // Tab state: ARENA, STATS, TABLES, LEADERBOARD
     // Debounce ref: prevents rapid concurrent fetchData calls from Realtime events
     const fetchTimerRef = useRef(null);
 
@@ -367,6 +371,8 @@ const Lobby = ({ onJoinMatch, onBack }) => {
     const featuredMatch = featuredSession ? mapSession(featuredSession, agentsMap, agentLastActions, 0) : null;
     const regularMatches = otherSessions.map((s, i) => mapSession(s, agentsMap, agentLastActions, i + 1));
 
+    const tabs = ['ARENA', 'STATS', 'TABLES', 'LEADERBOARD'];
+
     return (
         <div className="h-full w-full bg-[#080808] overflow-y-auto relative">
             {/* Subtle background texture */}
@@ -383,66 +389,157 @@ const Lobby = ({ onJoinMatch, onBack }) => {
                     <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
                 </button>
 
-                {/* Page Header */}
+                {/* Tab Navigation - Top Right */}
+                <div className="fixed top-6 right-6 z-50 flex items-center gap-6 lg:right-8">
+                    {tabs.map((tab, idx) => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab)}
+                            className={`text-xs font-mono font-bold tracking-widest uppercase transition-all ${
+                                activeTab === tab
+                                    ? 'text-[#f8312f]'
+                                    : 'text-gray-600 hover:text-white'
+                            }`}
+                        >
+                            {tab}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Page Header - Dynamic based on active tab */}
                 <header>
-                    <div className="flex items-center gap-2 mb-3">
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#f8312f] animate-pulse" />
-                        <span className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">
-                            {loading ? 'connecting…' : `${sessions.length} active ${sessions.length === 1 ? 'match' : 'matches'} · real-time`}
-                        </span>
-                    </div>
-                    <h1 className="text-3xl font-black text-white tracking-tight">Arena Overview</h1>
-                    <p className="text-gray-500 text-sm mt-1 max-w-xl">
-                        Select any match to enter spectator mode and observe AI agents in real-time.
-                    </p>
+                    {activeTab === 'ARENA' && (
+                        <>
+                            <div className="flex items-center gap-2 mb-3">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[#f8312f] animate-pulse" />
+                                <span className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">
+                                    {loading ? 'connecting…' : `${sessions.length} active ${sessions.length === 1 ? 'match' : 'matches'} · real-time`}
+                                </span>
+                            </div>
+                            <h1 className="text-3xl font-black text-white tracking-tight">Arena Overview</h1>
+                            <p className="text-gray-500 text-sm mt-1 max-w-xl">
+                                Select any match to enter spectator mode and observe AI agents in real-time.
+                            </p>
+                        </>
+                    )}
+
+                    {activeTab === 'STATS' && (
+                        <>
+                            <div className="flex items-center gap-2 mb-3">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
+                                <span className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">
+                                    Match Statistics · Real-time
+                                </span>
+                            </div>
+                            <h1 className="text-3xl font-black text-white tracking-tight">Statistics</h1>
+                            <p className="text-gray-500 text-sm mt-1 max-w-xl">
+                                Browse all matches and view detailed performance data.
+                            </p>
+                        </>
+                    )}
+
+                    {activeTab === 'TABLES' && (
+                        <>
+                            <div className="flex items-center gap-2 mb-3">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[#facc15] animate-pulse" />
+                                <span className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">
+                                    Active Tables · Live View
+                                </span>
+                            </div>
+                            <h1 className="text-3xl font-black text-white tracking-tight">Live Tables</h1>
+                            <p className="text-gray-500 text-sm mt-1 max-w-xl">
+                                Monitor all active poker tables and ongoing matches.
+                            </p>
+                        </>
+                    )}
+
+                    {activeTab === 'LEADERBOARD' && (
+                        <>
+                            <div className="flex items-center gap-2 mb-3">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[#a78bfa] animate-pulse" />
+                                <span className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">
+                                    Global Rankings · Updated Live
+                                </span>
+                            </div>
+                            <h1 className="text-3xl font-black text-white tracking-tight">Leaderboard</h1>
+                            <p className="text-gray-500 text-sm mt-1 max-w-xl">
+                                Top-performing AI agents ranked by winnings and performance.
+                            </p>
+                        </>
+                    )}
                 </header>
 
                 {/* Matchmaking queue — renders nothing when empty */}
                 <QueueStatus />
 
-                {/* Engine offline / loading state */}
-                {!loading && sessions.length === 0 && (
-                    <section className="bg-[#0d0d0d] border border-white/5 rounded-2xl p-12 flex flex-col items-center gap-4 text-center">
-                        <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center">
-                            <Radio className="w-5 h-5 text-gray-600" />
-                        </div>
-                        <div>
-                            <p className="text-white font-bold mb-1">No active matches</p>
-                            <p className="text-gray-600 text-sm">Connect your AI agent to see it playing live.</p>
-                        </div>
-                    </section>
+                {/* Conditional Content Based on Active Tab */}
+                {activeTab === 'ARENA' && (
+                    <>
+                        {/* Engine offline / loading state */}
+                        {!loading && sessions.length === 0 && (
+                            <section className="bg-[#0d0d0d] border border-white/5 rounded-2xl p-12 flex flex-col items-center gap-4 text-center">
+                                <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center">
+                                    <Radio className="w-5 h-5 text-gray-600" />
+                                </div>
+                                <div>
+                                    <p className="text-white font-bold mb-1">No active matches</p>
+                                    <p className="text-gray-600 text-sm">Connect your AI agent to see it playing live.</p>
+                                </div>
+                            </section>
+                        )}
+
+                        {/* Feature Match */}
+                        {featuredMatch && (
+                            <section>
+                                <div className="flex items-center gap-2 mb-4">
+                                    <Radio className="w-3.5 h-3.5 text-[#f8312f]" />
+                                    <span className="text-xs font-mono text-gray-500 uppercase tracking-widest">Featured Broadcast</span>
+                                </div>
+                                <FeatureMatchCard match={featuredMatch} onJoin={onJoinMatch} />
+                            </section>
+                        )}
+
+                        {/* Regular Match Grid */}
+                        {regularMatches.length > 0 && (
+                            <section>
+                                <div className="flex items-center justify-between mb-4">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
+                                        <span className="text-xs font-mono text-gray-500 uppercase tracking-widest">All Live Matches</span>
+                                    </div>
+                                    <span className="text-[10px] font-mono text-gray-600">{regularMatches.length} matches</span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {regularMatches.map((match, i) => (
+                                        <MatchCard key={match.id} match={match} idx={i} onJoin={onJoinMatch} />
+                                    ))}
+                                </div>
+                            </section>
+                        )}
+                    </>
                 )}
 
-                {/* Feature Match */}
-                {featuredMatch && (
-                    <section>
-                        <div className="flex items-center gap-2 mb-4">
-                            <Radio className="w-3.5 h-3.5 text-[#f8312f]" />
-                            <span className="text-xs font-mono text-gray-500 uppercase tracking-widest">Featured Broadcast</span>
-                        </div>
-                        <FeatureMatchCard match={featuredMatch} onJoin={onJoinMatch} />
-                    </section>
+                {/* STATS Tab View - NEW */}
+                {activeTab === 'STATS' && (
+                    <MatchStatsView />
                 )}
 
-                {/* Regular Match Grid */}
-                {regularMatches.length > 0 && (
-                    <section>
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
-                                <span className="text-xs font-mono text-gray-500 uppercase tracking-widest">All Live Matches</span>
-                            </div>
-                            <span className="text-[10px] font-mono text-gray-600">{regularMatches.length} matches</span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {regularMatches.map((match, i) => (
-                                <MatchCard key={match.id} match={match} idx={i} onJoin={onJoinMatch} />
-                            ))}
-                        </div>
-                    </section>
+                {/* TABLES Tab View */}
+                {activeTab === 'TABLES' && (
+                    <TablesView
+                        sessions={sessions}
+                        agentsMap={agentsMap}
+                        agentLastActions={agentLastActions}
+                        onJoinMatch={onJoinMatch}
+                    />
                 )}
 
-                {/* Deploy Your Agent Section */}
+                {/* LEADERBOARD Tab View */}
+                {activeTab === 'LEADERBOARD' && (
+                    <GlobalLeaderboard />
+                )}
+
+                {/* Deploy Your Agent Section - Always visible at bottom */}
                 <section className="bg-[#0d0d0d] border border-white/5 rounded-2xl p-8 relative overflow-hidden">
                     <div className="absolute -top-24 -right-24 w-64 h-64 bg-[#f8312f]/10 rounded-full blur-[80px] pointer-events-none" />
                     <div className="flex items-start gap-6 relative z-10 flex-col md:flex-row">

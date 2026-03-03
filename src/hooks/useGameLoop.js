@@ -336,9 +336,23 @@ export function useGameLoop(sessionId = null) {
   // Merge live stack data from session.player_data (updated every engine tick)
   // instead of relying on agents.balance (only updated at showdown).
   const livePlayerData = session?.player_data || [];
+
+  // DEBUG: Log player_data when status is showdown
+  if (session?.status === 'showdown' && livePlayerData.length > 0) {
+    console.log('[useGameLoop] SHOWDOWN - player_data:', JSON.parse(JSON.stringify(livePlayerData)));
+  }
+
   const players = agents.map(agent => {
     const live = livePlayerData.find(p => p.id === agent.id);
     const stack = live ? live.stack : (agent.balance || 0);
+    // Read hole cards from player_data first (backend sends during showdown), fallback to holeCardsMap
+    const holeCards = live?.holeCards || holeCardsMap[agent.id] || undefined;
+
+    // Debug: Log when we have hole cards from player_data
+    if (live?.holeCards) {
+      console.log(`[useGameLoop] Agent ${agent.name} has holeCards from player_data:`, live.holeCards);
+    }
+
     return {
       id: agent.id,
       name: agent.name,
@@ -347,7 +361,7 @@ export function useGameLoop(sessionId = null) {
       stack,
       isYou: false,
       personality_type: agent.personality_type,
-      holeCards: holeCardsMap[agent.id] || undefined,
+      holeCards: holeCards,
       ...(playerStates[agent.id] || DEFAULT_PLAYER_STATE),
     };
   });
@@ -360,6 +374,7 @@ export function useGameLoop(sessionId = null) {
     potSize: hasPlayers ? (session?.pot_amount || 0) : 0,
     communityCards: hasPlayers ? (session?.board_cards || []).map(convertCard).filter(Boolean) : [],
     eventLog: hasPlayers ? eventLog : [],
+    sessionStatus: hasPlayers ? (session?.status || 'waiting') : 'waiting',
     loading,
   };
 }
