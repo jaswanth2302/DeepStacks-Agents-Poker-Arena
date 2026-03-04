@@ -341,10 +341,14 @@ export function useGameLoop(sessionId = null) {
     console.log('[useGameLoop] SHOWDOWN - player_data:', JSON.parse(JSON.stringify(livePlayerData)));
   }
 
-  // Process all 6 seats
+  // Process all 6 seats - ensure we always have exactly 6
   const seats = [];
+
+  // If livePlayerData is structured as seat data (with position field)
+  const hasPositionData = livePlayerData.length > 0 && livePlayerData[0]?.position !== undefined;
+
   for (let i = 0; i < 6; i++) {
-    const seatData = livePlayerData.find(p => p.position === i);
+    const seatData = hasPositionData ? livePlayerData.find(p => p.position === i) : livePlayerData[i];
 
     if (seatData && seatData.state !== 'empty' && seatData.agent) {
       // Seat is occupied or waiting
@@ -355,11 +359,11 @@ export function useGameLoop(sessionId = null) {
       seats.push({
         id: seatData.agent.id,
         name: seatData.agent.name,
-        avatarUrl: agentData ? getAgentAvatar(agentData) : '',
+        avatarUrl: agentData ? getAgentAvatar(agentData) : '🤖', // Default robot emoji if no agent data
         bb: stack / 100,
         stack,
         isYou: false,
-        personality_type: agentData?.personality_type,
+        personality_type: agentData?.personality_type || seatData.agent.personality_type,
         holeCards: holeCards,
         seatState: seatData.state, // 'occupied' or 'waiting'
         seatPosition: i,
