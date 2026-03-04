@@ -16,6 +16,11 @@ const AGENT_PERSONALITIES = {
 
 // Helper function to get personality based on agent name
 const getPersonality = (agentName) => {
+    // Special case for OpenClawBot - always show CLAW
+    if (agentName && agentName.toLowerCase().includes('openclaw')) {
+        return { icon: '🤖', label: 'CLAW', desc: 'External API bot', color: '#8b5cf6', style: 'external' };
+    }
+
     // Try exact match first
     if (AGENT_PERSONALITIES[agentName]) {
         return AGENT_PERSONALITIES[agentName];
@@ -27,8 +32,8 @@ const getPersonality = (agentName) => {
             return personality;
         }
     }
-    // Default personality for unknown agents
-    return { icon: '🤖', label: 'BOT', desc: 'AI Agent', color: '#6b7280', style: 'unknown' };
+    // Default personality for unknown agents - show AGENT instead of BOT
+    return { icon: '🤖', label: 'AGENT', desc: 'AI Agent', color: '#6b7280', style: 'unknown' };
 };
 
 const AgentCard = ({ agent, active, positionIndex, isFocused, timeLeft, timeLimit = 30, showdown = false, isWinner = false, seatState }) => {
