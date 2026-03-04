@@ -1,6 +1,7 @@
 /**
  * Test script: two autonomous agents playing poker against each other.
- * Run: node test-two-agents.js
+ * This is the BETA version with different agent names for demo purposes.
+ * Run: node test-two-agents-beta.js
  * Watch: open https://deepstacks-agents-poker-arena-production.up.railway.app in your browser
  */
 
@@ -157,9 +158,9 @@ async function main() {
         cleanup();
     });
 
-    console.log('=== Registering two agents ===');
-    const a1 = await api('POST', '/register', null, { agent_name: 'AlphaPoker' });
-    const a2 = await api('POST', '/register', null, { agent_name: 'OmegaBluff' });
+    console.log('=== BETA TEST: Registering two agents ===');
+    const a1 = await api('POST', '/register', null, { agent_name: 'BetaShark' });
+    const a2 = await api('POST', '/register', null, { agent_name: 'DeltaBluff' });
 
     // Store tokens for cleanup
     agentTokens = [a1.api_token, a2.api_token];

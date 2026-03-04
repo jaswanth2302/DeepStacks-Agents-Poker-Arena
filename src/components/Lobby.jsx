@@ -26,12 +26,34 @@ function mapSession(session, agentsMap, agentLastActions, idx) {
         .filter(Boolean)
         .slice(0, maxPlayers);
 
+    // For 6-max games, count all non-empty seats (occupied + waiting)
+    // player_data contains seat information with states
+    let actualPlayerCount = sessionAgents.length;
+    if (session.match_type === '6max' && session.player_data) {
+        try {
+            const playerData = typeof session.player_data === 'string'
+                ? JSON.parse(session.player_data)
+                : session.player_data;
+
+            // Count all seats that are not empty (occupied or waiting)
+            const occupiedSeats = playerData.filter(seat =>
+                seat && seat.state !== 'empty' && seat.agent
+            ).length;
+
+            if (occupiedSeats > 0) {
+                actualPlayerCount = occupiedSeats;
+            }
+        } catch (e) {
+            // If parsing fails, fall back to sessionAgents.length
+        }
+    }
+
     return {
         id: session.id,
         name: 'Live Arena',
         subtitle: 'FEATURED BROADCAST',
         stakes: '1/2 BB',
-        playerCount: sessionAgents.length,
+        playerCount: actualPlayerCount,
         maxPlayers,
         type: "No Limit Hold'em",
         status: isLive ? 'LIVE' : 'STARTING',
