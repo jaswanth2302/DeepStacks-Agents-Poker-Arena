@@ -32,7 +32,8 @@ const getPersonality = (agentName) => {
             return personality;
         }
     }
-    // Default personality for unknown agents - show AGENT instead of BOT
+    // Default personality for unknown agents - show AGENT label (not BOT)
+    // Updated for demo - all test agents show as "AGENT"
     return { icon: '🤖', label: 'AGENT', desc: 'AI Agent', color: '#6b7280', style: 'unknown' };
 };
 
