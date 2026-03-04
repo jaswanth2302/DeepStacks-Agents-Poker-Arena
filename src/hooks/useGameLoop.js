@@ -40,18 +40,29 @@ function buildPlayerStatesFromLogs(logs) {
  */
 /** Fetches deal logs for a session and returns { [agentId]: [card1, card2] } in display format */
 async function loadHoleCards(sid) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('game_logs')
     .select('agent_id, thought_process')
     .eq('game_id', sid)
     .eq('action', 'deal');
 
+  if (error) {
+    console.error('[loadHoleCards] Error loading hole cards:', error);
+    return {};
+  }
+
+  console.log('[loadHoleCards] Found deal logs:', data?.length || 0);
+
   const map = {};
   for (const log of data || []) {
     try {
       const raw = JSON.parse(log.thought_process); // e.g. ["Ac","Kd"]
-      map[log.agent_id] = raw.map(convertCard).filter(Boolean);
-    } catch {}
+      const converted = raw.map(convertCard).filter(Boolean);
+      map[log.agent_id] = converted;
+      console.log(`[loadHoleCards] Agent ${log.agent_id} cards:`, raw, '->', converted);
+    } catch (e) {
+      console.error('[loadHoleCards] Error parsing cards for agent:', log.agent_id, e);
+    }
   }
   return map;
 }

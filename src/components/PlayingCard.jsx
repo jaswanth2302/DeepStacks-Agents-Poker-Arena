@@ -26,7 +26,7 @@ const parseCard = (card) => {
  * @param {number}  height - px height
  * @param {boolean} animate - whether to animate in
  */
-const PlayingCard = ({ card, width = 65, height = 95, animate = true, delay = 0 }) => {
+const PlayingCard = ({ card, width = 65, height = 95, animate = true, delay = 0, glow = false }) => {
     const parsed = parseCard(card);
 
     if (!parsed) {
@@ -54,7 +54,11 @@ const PlayingCard = ({ card, width = 65, height = 95, animate = true, delay = 0 
     const wrapperProps = animate
         ? {
             initial: { opacity: 0, scale: 0.7, rotateY: 180 },
-            animate: { opacity: 1, scale: 1, rotateY: 0 },
+            animate: {
+                opacity: 1,
+                scale: glow ? [1, 1.05, 1] : 1,
+                rotateY: 0,
+            },
             transition: { type: 'spring', stiffness: 200, damping: 20, delay },
         }
         : {};
@@ -68,7 +72,9 @@ const PlayingCard = ({ card, width = 65, height = 95, animate = true, delay = 0 
                 height,
                 backgroundColor: cfg.bg,
                 border: `1.5px solid ${cfg.border}`,
-                boxShadow: `0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.07)`,
+                boxShadow: glow
+                    ? `0 4px 12px rgba(0,0,0,0.5), 0 0 20px rgba(255,255,255,0.5), inset 0 1px 0 rgba(255,255,255,0.07)`
+                    : `0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.07)`,
             }}
         >
             {/* Top-left corner */}

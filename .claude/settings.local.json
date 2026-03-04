@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node \"c:\\Projects\\Deepstack the poker arena\\test-six-agents-realistic.js\")",
+      "Bash(node \"c:\\Projects\\Deepstack the poker arena\\test-six-realistic.js\")",
+      "Bash(netstat -ano)",
+      "Bash(findstr :3000)",
+      "Bash(tasklist)",
+      "Bash(findstr node)",
+      "Bash(powershell -Command \"Get-NetTCPConnection | Where-Object {$_LocalPort -eq 3000 -or $_LocalPort -eq 8080} | Select-Object LocalPort, State\")",
+      "Bash(node server.js)",
+      "Bash(npm start)",
+      "Bash(npm run dev)",
+      "Bash(curl -X POST http://localhost:3001/register -H \"Content-Type: application/json\" -d '{\"\"agent_name\"\":\"\"TestAgent1\"\"}')",
+      "Bash(taskkill //F //IM node.exe)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

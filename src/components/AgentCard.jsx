@@ -60,9 +60,14 @@ const AgentCard = ({ agent, active, positionIndex, isFocused, timeLeft, timeLimi
     // During showdown, show all players' cards face-up
     const shouldShowCards = isHero || (showdown && agent.holeCards?.length >= 2);
 
-    // DEBUG: Log showdown state
-    if (showdown && positionIndex === 0) {
-        console.log('[AgentCard] SHOWDOWN MODE - agent:', agent.name, 'holeCards:', agent.holeCards, 'shouldShowCards:', shouldShowCards);
+    // DEBUG: Log showdown state for all agents
+    if (showdown) {
+        console.log(`[AgentCard] SHOWDOWN - ${agent.name} (pos ${positionIndex}):`, {
+            holeCards: agent.holeCards,
+            shouldShowCards,
+            isHero,
+            hasCards: agent.holeCards?.length >= 2
+        });
     }
 
     // Calculate thinking indicator properties
