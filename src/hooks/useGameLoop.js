@@ -333,8 +333,7 @@ export function useGameLoop(sessionId = null) {
   }, [sessionId]);
 
   // Build the player array that PokerTable expects.
-  // Merge live stack data from session.player_data (updated every engine tick)
-  // instead of relying on agents.balance (only updated at showdown).
+  // Now we handle 6 seats with states: 'empty', 'occupied', 'waiting'
   const livePlayerData = session?.player_data || [];
 
   // DEBUG: Log player_data when status is showdown
@@ -342,34 +341,51 @@ export function useGameLoop(sessionId = null) {
     console.log('[useGameLoop] SHOWDOWN - player_data:', JSON.parse(JSON.stringify(livePlayerData)));
   }
 
-  const players = agents.map(agent => {
-    const live = livePlayerData.find(p => p.id === agent.id);
-    const stack = live ? live.stack : (agent.balance || 0);
-    // Read hole cards from player_data first (backend sends during showdown), fallback to holeCardsMap
-    const holeCards = live?.holeCards || holeCardsMap[agent.id] || undefined;
+  // Process all 6 seats
+  const seats = [];
+  for (let i = 0; i < 6; i++) {
+    const seatData = livePlayerData.find(p => p.position === i);
 
-    // Debug: Log when we have hole cards from player_data
-    if (live?.holeCards) {
-      console.log(`[useGameLoop] Agent ${agent.name} has holeCards from player_data:`, live.holeCards);
+    if (seatData && seatData.state !== 'empty' && seatData.agent) {
+      // Seat is occupied or waiting
+      const agentData = agents.find(a => a.id === seatData.agent.id);
+      const stack = seatData.agent.stack || 0;
+      const holeCards = seatData.agent.holeCards || holeCardsMap[seatData.agent.id] || undefined;
+
+      seats.push({
+        id: seatData.agent.id,
+        name: seatData.agent.name,
+        avatarUrl: agentData ? getAgentAvatar(agentData) : '',
+        bb: stack / 100,
+        stack,
+        isYou: false,
+        personality_type: agentData?.personality_type,
+        holeCards: holeCards,
+        seatState: seatData.state, // 'occupied' or 'waiting'
+        seatPosition: i,
+        ...(playerStates[seatData.agent.id] || DEFAULT_PLAYER_STATE),
+      });
+    } else {
+      // Empty seat
+      seats.push({
+        id: `empty-${i}`,
+        seatState: 'empty',
+        seatPosition: i,
+        name: 'Empty Seat',
+        stack: 0,
+        isYou: false,
+      });
     }
+  }
 
-    return {
-      id: agent.id,
-      name: agent.name,
-      avatarUrl: getAgentAvatar(agent),
-      bb: stack / 100,
-      stack,
-      isYou: false,
-      personality_type: agent.personality_type,
-      holeCards: holeCards,
-      ...(playerStates[agent.id] || DEFAULT_PLAYER_STATE),
-    };
-  });
+  // Filter to get only active players (not empty or waiting)
+  const players = seats.filter(s => s.seatState === 'occupied' || s.seatState === 'waiting');
 
   // Guard: never pass stale session data downstream when there are no live agents
   const hasPlayers = players.length > 0;
   return {
     players,
+    seats, // Return all 6 seats for display
     currentTurn: hasPlayers ? (session?.current_turn_agent_id || null) : null,
     potSize: hasPlayers ? (session?.pot_amount || 0) : 0,
     communityCards: hasPlayers ? (session?.board_cards || []).map(convertCard).filter(Boolean) : [],

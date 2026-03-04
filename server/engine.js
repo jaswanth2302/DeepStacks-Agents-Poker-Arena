@@ -12,30 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ── JSON Error Handler (for AI agents) ──────────────────────────────────────
-// Must come BEFORE express.json() to catch parsing errors
-app.use((err, req, res, next) => {
-    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-        console.error(`[API] Invalid JSON received: ${err.message}`);
-        return res.status(400).json({
-            error: 'Invalid JSON format in request body',
-            message: 'The JSON you sent is malformed. Common issues: missing quotes around keys, trailing commas, or sending form-data instead of JSON.',
-            expected_format: req.path === '/register'
-                ? '{"agent_name":"YourBotName"}'
-                : req.path === '/action'
-                ? '{"action":"call","amount":200,"thought_process":"optional reasoning"}'
-                : '{}',
-            how_to_fix: [
-                '1. Ensure Content-Type header is "application/json"',
-                '2. Use double quotes for both keys and values',
-                '3. Validate JSON syntax before sending',
-                `4. Example curl: curl -X POST ${req.protocol}://${req.get('host')}${req.path} -H "Content-Type: application/json" -d '{"agent_name":"BotName"}'`
-            ]
-        });
-    }
-    next();
-});
-
+// Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../dist')));
 
@@ -78,17 +55,40 @@ class GameInstance {
     constructor(sessionId, players, matchType = '6max') {
         this.sessionId = sessionId;
         this.matchType = matchType;
+
+        // Initialize 6 seats (fixed positions)
+        this.seats = Array(6).fill(null).map((_, index) => ({
+            position: index,
+            state: 'empty', // 'empty', 'occupied', 'waiting'
+            agent: null
+        }));
+
+        // Place initial players in seats
+        players.forEach((player, index) => {
+            if (index < 6) {
+                this.seats[index] = {
+                    position: index,
+                    state: 'occupied',
+                    agent: player
+                };
+            }
+        });
+
         this.state = {
-            status: 'playing',
+            status: 'waiting_for_players', // Start in waiting state
             pot: 0,
             boardCards: [],
             deck: [],
-            players, // { id, name, stack, currentBet, holeCards, status }
+            players: players.filter((_, i) => i < 6), // Only active players in current hand
             currentTurnIndex: 0,
             currentBetMax: 0,
         };
+
+        this.waitingPlayers = []; // Players who joined mid-hand
         this.waitingForAction = false;
         this.actionTimeoutObj = null;
+        this.tableTimeoutObj = null; // For destroying empty tables
+        this.lastActivityTime = Date.now();
         this.channel = null;
 
         // ── Agent-facing game context ───────────────────────────────
@@ -96,9 +96,132 @@ class GameInstance {
         this.actionHistory = [];         // [{ player, action, amount, round }]
         this.lastHandResult = null;      // populated at showdown, cleared on new hand
         this.blinds = { small: 50, big: 100 };
+
+        // Start table timeout if only 1 player
+        if (this.getOccupiedSeats().length === 1) {
+            this.startTableTimeout();
+        }
     }
 
     tag() { return this.sessionId.slice(0, 8); }
+
+    /** Get all occupied seats (occupied or waiting) */
+    getOccupiedSeats() {
+        return this.seats.filter(s => s.state !== 'empty');
+    }
+
+    /** Get count of empty seats */
+    getEmptySeatsCount() {
+        return this.seats.filter(s => s.state === 'empty').length;
+    }
+
+    /** Find first empty seat index */
+    findEmptySeat() {
+        const emptySeat = this.seats.find(s => s.state === 'empty');
+        return emptySeat ? emptySeat.position : -1;
+    }
+
+    /** Add player to specific seat */
+    addPlayerToSeat(agent, seatIndex) {
+        if (this.seats[seatIndex].state !== 'empty') return false;
+
+        this.seats[seatIndex] = {
+            position: seatIndex,
+            state: this.state.status === 'playing' ? 'waiting' : 'occupied',
+            agent: agent
+        };
+
+        // If hand is in progress, add to waiting list
+        if (this.state.status === 'playing') {
+            this.waitingPlayers.push(agent);
+            console.log(`[${this.tag()}] ${agent.name} joined seat ${seatIndex} (waiting for next hand)`);
+        } else {
+            // Add to active players if not in hand
+            this.state.players.push(agent);
+            console.log(`[${this.tag()}] ${agent.name} joined seat ${seatIndex}`);
+        }
+
+        // Cancel table timeout if we now have 2+ players
+        if (this.getOccupiedSeats().length >= 2 && this.tableTimeoutObj) {
+            clearTimeout(this.tableTimeoutObj);
+            this.tableTimeoutObj = null;
+            console.log(`[${this.tag()}] Table timeout cancelled - ${this.getOccupiedSeats().length} players at table`);
+        }
+
+        this.lastActivityTime = Date.now();
+        return true;
+    }
+
+    /** Start timeout to destroy table if only 1 player */
+    startTableTimeout() {
+        if (this.tableTimeoutObj) clearTimeout(this.tableTimeoutObj);
+
+        const timeoutMs = 60000; // 60 seconds
+        console.log(`[${this.tag()}] Starting 60s timeout - waiting for more players`);
+
+        this.tableTimeoutObj = setTimeout(async () => {
+            if (this.getOccupiedSeats().length <= 1) {
+                console.log(`[${this.tag()}] Table timeout - destroying table with ${this.getOccupiedSeats().length} player(s)`);
+
+                // Remove remaining player
+                const occupiedSeat = this.seats.find(s => s.state !== 'empty');
+                if (occupiedSeat && occupiedSeat.agent) {
+                    await this.removePlayerFromSeat(occupiedSeat.agent.id, true);
+                }
+
+                // Destroy table
+                await this.destroy();
+            }
+        }, timeoutMs);
+    }
+
+    /** Remove player and update seat to empty */
+    async removePlayerFromSeat(agentId, isTimeout = false) {
+        const seatIndex = this.seats.findIndex(s => s.agent?.id === agentId);
+        if (seatIndex === -1) return false;
+
+        const seat = this.seats[seatIndex];
+        const agent = seat.agent;
+
+        // Clear the seat
+        this.seats[seatIndex] = {
+            position: seatIndex,
+            state: 'empty',
+            agent: null
+        };
+
+        // Remove from active players
+        this.state.players = this.state.players.filter(p => p.id !== agentId);
+
+        // Remove from waiting players
+        this.waitingPlayers = this.waitingPlayers.filter(p => p.id !== agentId);
+
+        console.log(`[${this.tag()}] ${agent.name} removed from seat ${seatIndex} (${isTimeout ? 'timeout' : 'left'})`);
+
+        // Check if we need to start table timeout
+        const occupied = this.getOccupiedSeats().length;
+        if (occupied === 1) {
+            this.startTableTimeout();
+        } else if (occupied === 0) {
+            // Destroy empty table immediately
+            await this.destroy();
+        }
+
+        this.lastActivityTime = Date.now();
+        return true;
+    }
+
+    /** Transition waiting players to active at hand end */
+    transitionWaitingPlayers() {
+        for (const seat of this.seats) {
+            if (seat.state === 'waiting') {
+                seat.state = 'occupied';
+                this.state.players.push(seat.agent);
+                console.log(`[${this.tag()}] ${seat.agent.name} transitioned from waiting to playing`);
+            }
+        }
+        this.waitingPlayers = [];
+    }
 
     /** Current betting round name derived from board cards dealt */
     getCurrentRound() {
@@ -120,6 +243,21 @@ class GameInstance {
     }
 
     async updateDbSession() {
+        // Build seat data for UI display
+        const seatData = this.seats.map(seat => ({
+            position: seat.position,
+            state: seat.state,
+            agent: seat.agent ? {
+                id: seat.agent.id,
+                name: seat.agent.name,
+                stack: seat.agent.stack,
+                currentBet: seat.agent.currentBet,
+                status: seat.agent.status,
+                // Include hole cards during showdown for spectators to see
+                holeCards: this.state.status === 'showdown' ? seat.agent.holeCards : undefined,
+            } : null
+        }));
+
         await supabase
             .from('game_sessions')
             .update({
@@ -127,15 +265,7 @@ class GameInstance {
                 board_cards: this.state.boardCards,
                 current_turn_agent_id: this.state.players[this.state.currentTurnIndex]?.id || null,
                 status: this.state.status,
-                player_data: this.state.players.map(p => ({
-                    id: p.id,
-                    name: p.name,
-                    stack: p.stack,
-                    currentBet: p.currentBet,
-                    status: p.status,
-                    // Include hole cards during showdown for spectators to see
-                    holeCards: this.state.status === 'showdown' ? p.holeCards : undefined,
-                })),
+                player_data: seatData, // Now includes all 6 seats with their states
             })
             .eq('id', this.sessionId);
     }
@@ -152,6 +282,37 @@ class GameInstance {
     }
 
     async startNewHand() {
+        // First transition any waiting players to active
+        this.transitionWaitingPlayers();
+
+        // Check if we have minimum 2 players
+        if (this.state.players.length < 2) {
+            console.log(`[${this.tag()}] Not enough players to start hand (${this.state.players.length}/2 minimum)`);
+            this.state.status = 'waiting_for_players';
+            await this.updateDbSession();
+
+            // Start timeout if only 1 player
+            if (this.state.players.length === 1) {
+                this.startTableTimeout();
+            }
+            return;
+        }
+
+        // If we have exactly 2 players, wait 15 seconds for more to join
+        if (this.state.players.length === 2 && !this.handNumber) {
+            console.log(`[${this.tag()}] 2 players ready - waiting 15s for more to join`);
+            this.state.status = 'waiting_for_players';
+            await this.updateDbSession();
+
+            setTimeout(() => {
+                // Check again after wait period
+                if (this.state.players.length >= 2) {
+                    this.startNewHand();
+                }
+            }, 15000);
+            return;
+        }
+
         this.handNumber++;
         this.actionHistory = [];
         this.lastHandResult = null;
@@ -242,7 +403,7 @@ class GameInstance {
                 this.waitingForAction = false;
                 console.log(`[${this.tag()}] [TIMEOUT] Removing ${player.name} from table after ${timeoutMs / 1000}s`);
                 await this.writeActionLog(player.id, 'timeout', 0, '[SYSTEM] Removed due to timeout', 1.0);
-                await this.removePlayer(player.id);
+                await this.removePlayer(player.id, true);
                 this.triggerNextActionRequest(); // Continue game with remaining players
             }
         }, timeoutMs);
@@ -413,8 +574,8 @@ class GameInstance {
         queueManager.onTableDone(this.sessionId);
     }
 
-    /** Remove a player mid-session (voluntary leave). Treats them as folded. */
-    async removePlayer(agentId) {
+    /** Remove a player mid-session (voluntary leave or timeout). */
+    async removePlayer(agentId, isTimeout = false) {
         const player = this.state.players.find(p => p.id === agentId);
         if (!player) return false;
 
@@ -426,17 +587,20 @@ class GameInstance {
             this.state.players[this.state.currentTurnIndex]?.id === agentId;
 
         if (isTheirTurn) {
-            await this.writeActionLog(agentId, 'fold', 0, '[SYSTEM] Player left the table', 1.0);
+            await this.writeActionLog(agentId, 'fold', 0, `[SYSTEM] Player ${isTimeout ? 'timed out' : 'left the table'}`, 1.0);
             await this.processPlayerAction('fold', 0);
         }
 
-        // Mark as folded so they're skipped in future rounds
-        player.status = 'folded';
+        // Remove from seat and mark as empty
+        await this.removePlayerFromSeat(agentId, isTimeout);
 
-        console.log(`[${this.tag()}] ${player.name} left the table (stack: $${player.stack})`);
-        await this.writeActionLog(agentId, 'leave', 0, '[SYSTEM] Player left voluntarily', 1.0);
+        console.log(`[${this.tag()}] ${player.name} removed from table (${isTimeout ? 'timeout' : 'left'}, stack: $${player.stack})`);
+        await this.writeActionLog(agentId, 'leave', 0, `[SYSTEM] Player ${isTimeout ? 'removed due to timeout' : 'left voluntarily'}`, 1.0);
 
-        // If only 1 active player remains, trigger showdown
+        // Update database to reflect seat change
+        await this.updateDbSession();
+
+        // If only 1 active player remains in hand, trigger showdown
         const activePlayers = this.state.players.filter(p => p.status === 'active');
         if (activePlayers.length <= 1 && !isTheirTurn) {
             this.handleShowdown(true);
@@ -447,6 +611,7 @@ class GameInstance {
 
     async destroy() {
         if (this.actionTimeoutObj) clearTimeout(this.actionTimeoutObj);
+        if (this.tableTimeoutObj) clearTimeout(this.tableTimeoutObj);
         if (this.channel) supabase.removeChannel(this.channel);
         tableRegistry.delete(this.sessionId);
         console.log(`[${this.tag()}] Table destroyed`);
@@ -465,6 +630,17 @@ const queueManager = {
         console.log('[Queue] Manager started (5s tick)');
     },
 
+    /** Find table with empty seats for agent to join */
+    findTableWithEmptySeats() {
+        for (const [sessionId, instance] of tableRegistry) {
+            const emptyCount = instance.getEmptySeatsCount();
+            if (emptyCount > 0) {
+                return instance;
+            }
+        }
+        return null;
+    },
+
     async tick() {
         if (this.ticking) return;       // guard against overlapping ticks
         this.ticking = true;
@@ -479,7 +655,7 @@ const queueManager = {
                     const lastPoll = agentLastPoll.get(p.id);
                     if (lastPoll && (now - lastPoll) > DISCONNECT_MS) {
                         console.log(`[Queue] ${p.name} disconnected (no poll for ${((now - lastPoll) / 1000).toFixed(0)}s) — removing`);
-                        await instance.removePlayer(p.id);
+                        await instance.removePlayer(p.id, true);
                         agentLastPoll.delete(p.id);
                     }
                 }
@@ -496,28 +672,55 @@ const queueManager = {
             }
             if (this.queue.length === 0) return;
 
-            const waited = now - this.queue[0].queuedAt;
-            const qLen = this.queue.length;
+            // Process queue: Try to place agents in existing tables with empty seats
+            while (this.queue.length > 0) {
+                const agent = this.queue[0];
+                const table = this.findTableWithEmptySeats();
 
-            // Graduated timeout: more agents → launch sooner
-            // 6+ agents → launch immediately
-            // 4-5 agents → launch after 30s
-            // 2-3 agents → launch after 30s
-            const shouldLaunch =
-                qLen >= 6 ||
-                (qLen >= 4 && waited >= 30_000) ||
-                (qLen >= 2 && waited >= 30_000);
+                if (table) {
+                    // Join existing table
+                    const seatIndex = table.findEmptySeat();
+                    if (seatIndex !== -1) {
+                        const agentData = {
+                            id: agent.agentRecord.id,
+                            name: agent.agentRecord.name,
+                            personality_type: agent.agentRecord.personality_type || 'default',
+                            stack: agent.agentRecord.balance || 10000,
+                            currentBet: 0,
+                            status: 'active',
+                            holeCards: [],
+                        };
 
-            if (shouldLaunch) {
-                await this.launchTable(6);
+                        if (table.addPlayerToSeat(agentData, seatIndex)) {
+                            this.queue.shift(); // Remove from queue
+                            await table.updateDbSession();
+                            console.log(`[Queue] ${agentData.name} joined existing table ${table.tag()} at seat ${seatIndex}`);
+
+                            // If table was waiting and now has 2+ players, start the game
+                            if (table.state.status === 'waiting_for_players' && table.state.players.length >= 2) {
+                                await table.startNewHand();
+                            }
+                        } else {
+                            break; // Failed to add, stop processing
+                        }
+                    } else {
+                        break; // No empty seats found
+                    }
+                } else {
+                    // No tables with empty seats - create new table if we have at least 1 agent
+                    await this.launchTable(1);
+                    break;
+                }
             }
         } finally {
             this.ticking = false;
         }
     },
 
-    async launchTable(targetSize) {
-        const seatCount = Math.min(this.queue.length, targetSize);
+    async launchTable(minPlayers) {
+        if (this.queue.length < minPlayers) return;
+
+        const seatCount = Math.min(this.queue.length, minPlayers);
         const seated = this.queue.splice(0, seatCount);
 
         const allPlayers = seated.map(s => ({
@@ -530,18 +733,18 @@ const queueManager = {
             holeCards: [],
         }));
 
-        if (allPlayers.length < 2) {
-            console.warn('[Queue] Not enough players — returning to queue');
-            this.queue.unshift(...seated);
-            return;
-        }
-
         const playerIds = allPlayers.map(p => p.id);
-        const matchType = playerIds.length <= 2 ? 'heads_up' : playerIds.length <= 3 ? '3max' : '6max';
+        const matchType = '6max'; // Always 6-max tables now
 
         const { data: sessData, error } = await supabase
             .from('game_sessions')
-            .insert([{ status: 'playing', pot_amount: 0, board_cards: [], match_type: matchType, player_ids: playerIds }])
+            .insert([{
+                status: 'waiting_for_players',
+                pot_amount: 0,
+                board_cards: [],
+                match_type: matchType,
+                player_ids: playerIds
+            }])
             .select()
             .single();
 
@@ -554,9 +757,14 @@ const queueManager = {
         const instance = new GameInstance(sessData.id, allPlayers, matchType);
         tableRegistry.set(sessData.id, instance);
         await instance.setupChannel();
-        await instance.startNewHand();
+        await instance.updateDbSession(); // Update to show seats
 
-        console.log(`[Queue] Launched ${matchType} table ${sessData.id.slice(0,8)} (${allPlayers.length} players)`);
+        console.log(`[Queue] Launched 6-max table ${sessData.id.slice(0,8)} with ${allPlayers.length} player(s)`);
+
+        // Start the hand if we have 2+ players, otherwise wait
+        if (allPlayers.length >= 2) {
+            await instance.startNewHand();
+        }
     },
 
     async onTableDone(sessionId) {
@@ -565,83 +773,75 @@ const queueManager = {
 
         const players = instance.state.players;
 
-        // Remove busted players (stack <= 0)
-        const alive = players.filter(p => p.stack > 0);
-        const busted = players.filter(p => p.stack <= 0);
-        for (const b of busted) {
-            console.log(`[Queue] ${b.name} busted out (stack: ${b.stack})`);
+        // Remove busted players (stack <= 0) from seats
+        const alive = [];
+        const busted = [];
+
+        for (const p of players) {
+            if (p.stack <= 0) {
+                busted.push(p);
+                // Remove from seat
+                await instance.removePlayerFromSeat(p.id, false);
+                console.log(`[Queue] ${p.name} busted out (stack: ${p.stack}) - seat now empty`);
+            } else {
+                alive.push(p);
+            }
         }
 
-        // If 2+ players remain, rotate dealer and deal another hand
-        if (alive.length >= 2) {
-            instance.state.players = alive;
+        // Update agent balances for busted players
+        for (const p of busted) {
+            await supabase
+                .from('agents')
+                .update({ balance: 0 }) // Busted = 0 balance
+                .eq('id', p.id);
+        }
+
+        // Check if we still have enough players to continue
+        const occupiedSeats = instance.getOccupiedSeats();
+        if (occupiedSeats.length >= 2) {
             // Rotate dealer button — move first player to end
             instance.state.players.push(instance.state.players.shift());
-            console.log(`[Queue] Table ${sessionId.slice(0, 8)} continuing — ${alive.length} players, new hand`);
+            console.log(`[Queue] Table ${sessionId.slice(0, 8)} continuing — ${occupiedSeats.length}/6 seats occupied, new hand`);
             await instance.startNewHand();
             return;
         }
 
-        // Not enough players — mark session ended and destroy table
-        const winnerId = alive.length === 1 ? alive[0].id : null;
+        // Not enough players — handle remaining player
+        if (occupiedSeats.length === 1) {
+            console.log(`[Queue] Table ${sessionId.slice(0, 8)} has only 1 player left - starting timeout`);
+            // Table will handle timeout and destruction
+            return;
+        }
+
+        // No players left - destroy table
+        console.log(`[Queue] Table ${sessionId.slice(0, 8)} is empty - destroying`);
 
         await supabase.from('game_sessions').update({
             status: 'ended',
             ended_at: new Date().toISOString(),
             total_hands: instance.handNumber,
-            winner_id: winnerId
+            winner_id: alive.length === 1 ? alive[0].id : null
         }).eq('id', sessionId);
 
-        // Update agent balances in database (persist final stacks)
-        for (const p of players) {
-            const { data: agentRecord } = await supabase
-                .from('agents')
-                .select('balance')
-                .eq('id', p.id)
-                .single();
-
-            if (agentRecord) {
-                // Calculate profit/loss for this match
-                const startingStack = 10000; // Default starting stack
-                const profitLoss = p.stack - startingStack;
-
-                await supabase
-                    .from('agents')
-                    .update({
-                        balance: p.stack,
-                        total_profit: (agentRecord.balance - startingStack) + profitLoss, // Cumulative profit
-                    })
-                    .eq('id', p.id);
-
-                console.log(`[Queue] Updated ${p.name} balance: ${p.stack} (${profitLoss >= 0 ? '+' : ''}${profitLoss})`);
-            }
-        }
-
         await instance.destroy();
-
-        // Re-queue surviving agents (destroy first so enqueue check passes)
-        for (const p of alive) {
-            const { data: agentRecord } = await supabase.from('agents').select('*').eq('id', p.id).maybeSingle();
-            if (agentRecord) {
-                console.log(`[Queue] Re-queuing surviving agent: ${p.name}`);
-                this.enqueue(agentRecord);
-            }
-        }
-
-        // If enough agents are waiting, launch a new table immediately
-        if (tableRegistry.size === 0 && this.queue.length >= 2) {
-            await this.launchTable(6);
-        }
     },
 
     enqueue(agentRecord) {
         const alreadyQueued = this.queue.some(e => e.agentId === agentRecord.id);
+
+        // Check if agent is already at any table (in any seat)
         const alreadyPlaying = [...tableRegistry.values()].some(t =>
-            t.state.players.some(p => p.id === agentRecord.id)
+            t.seats.some(seat => seat.agent?.id === agentRecord.id)
         );
+
         if (alreadyQueued || alreadyPlaying) return false;
+
         this.queue.push({ agentId: agentRecord.id, agentRecord, queuedAt: Date.now() });
         console.log(`[Queue] Enqueued ${agentRecord.name} (queue: ${this.queue.length})`);
+
+        // Immediately try to place in a table if one is available
+        this.tick();
+
         return true;
     },
 };
@@ -837,7 +1037,20 @@ app.get('/my-game', async (req, res) => {
         min_raise: Math.min(minRaise, player.stack + player.currentBet),
         max_raise: maxRaise,
 
-        // All players at the table
+        // All 6 seats with their states
+        seats: instance.seats.map(seat => ({
+            position: seat.position,
+            state: seat.state, // 'empty', 'occupied', 'waiting'
+            agent: seat.agent ? {
+                name: seat.agent.name,
+                stack: seat.agent.stack,
+                status: seat.agent.status,
+                current_bet: seat.agent.currentBet,
+                is_current_turn: seat.agent.id === s.players[s.currentTurnIndex]?.id,
+            } : null
+        })),
+
+        // Active players in current hand
         players: s.players.map((p, i) => ({
             name: p.name,
             stack: p.stack,
@@ -970,13 +1183,29 @@ app.post('/leave', async (req, res) => {
 app.get('/queue-status', (_req, res) => {
     // Filter out agents that are already at a table (race condition defense)
     const playingIds = new Set();
-    for (const inst of tableRegistry.values())
-        for (const p of inst.state.players) playingIds.add(p.id);
+    for (const inst of tableRegistry.values()) {
+        for (const seat of inst.seats) {
+            if (seat.agent) playingIds.add(seat.agent.id);
+        }
+    }
     const filtered = queueManager.queue.filter(e => !playingIds.has(e.agentId));
+
+    // Get table occupancy info
+    const tables = [];
+    for (const [sessionId, inst] of tableRegistry) {
+        const occupied = inst.getOccupiedSeats().length;
+        tables.push({
+            id: sessionId.slice(0, 8),
+            occupancy: `${occupied}/6`,
+            status: inst.state.status,
+            waiting_players: inst.waitingPlayers.length
+        });
+    }
 
     res.json({
         queue_length: filtered.length,
         active_tables: tableRegistry.size,
+        tables: tables,
         queued_agents: filtered.map(e => ({
             id: e.agentId,
             name: e.agentRecord.name,

@@ -31,12 +31,15 @@ function formatLogEntry(entry) {
     return { name, action, amt };
 }
 
-const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = [], spectatedAgentId, onAgentClick, onLeave, sessionStatus }) => {
-    // Find where the spectated agent is in the array
-    const spectatedIndex = players.findIndex(p => p.id === spectatedAgentId);
+const PokerTable = ({ players, seats = [], currentTurn, potSize, communityCards, eventLog = [], spectatedAgentId, onAgentClick, onLeave, sessionStatus }) => {
+    // Use seats array if provided, otherwise fall back to players
+    const displaySeats = seats.length > 0 ? seats : players;
+
+    // Find where the spectated agent is in the seats
+    const spectatedIndex = displaySeats.findIndex(p => p.id === spectatedAgentId);
 
     // We want the spectated agent to be at ovalPositions index 3 (bottom center)
-    const offset = spectatedIndex !== -1 ? (3 - spectatedIndex + players.length) % players.length : 0;
+    const offset = spectatedIndex !== -1 ? (3 - spectatedIndex + displaySeats.length) % displaySeats.length : 0;
 
     // Animation state
     const [bettingChips, setBettingChips] = useState([]);
@@ -56,6 +59,7 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = 
     const prevSessionStatusRef = useRef(null);
     const prevWinEventIdRef = useRef(null);
     const hasInitializedCardCount = useRef(false);
+    const animatedEventIdsRef = useRef(new Set()); // Track which events we've already animated
 
     // Initialize previousCardCount on mount to avoid "DEALING..." showing for existing cards
     useEffect(() => {
@@ -244,7 +248,7 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = 
 
                 {/* Agent Nodes — absolute, positioned relative to the center of the shared wrapper */}
                 <div className="absolute top-1/2 left-1/2 w-[1px] h-[1px] pointer-events-none">
-                    {players.map((agent, index) => {
+                    {displaySeats.map((seat, index) => {
                         const ovalPositions = [
                             { x: 0, y: -200 }, // 0 top (moved down from -240 to avoid cutoff)
                             { x: 360, y: -120 }, // 1 top-right
@@ -256,27 +260,30 @@ const PokerTable = ({ players, currentTurn, potSize, communityCards, eventLog = 
 
                         const targetPositionIndex = (index + offset) % ovalPositions.length;
                         const pos = ovalPositions[targetPositionIndex];
-                        const active = currentTurn === agent.id;
-                        const isFocused = spectatedAgentId === agent.id;
+                        const active = currentTurn === seat.id;
+                        const isFocused = spectatedAgentId === seat.id;
+                        const isEmptySeat = seat.seatState === 'empty';
+                        const isWaiting = seat.seatState === 'waiting';
 
                         return (
                             <motion.div
-                                key={agent.id}
+                                key={seat.id}
                                 initial={false}
                                 animate={{ x: pos.x, y: pos.y }}
                                 transition={{ type: "spring", stiffness: 45, damping: 15 }}
-                                className="absolute top-0 left-0 flex items-center justify-center z-30 pointer-events-auto -mt-[36px] -ml-[36px] cursor-pointer hover:scale-105 transition-transform"
-                                onClick={() => onAgentClick(agent.id)}
+                                className={`absolute top-0 left-0 flex items-center justify-center z-30 pointer-events-auto -mt-[36px] -ml-[36px] ${!isEmptySeat ? 'cursor-pointer hover:scale-105' : ''} transition-transform`}
+                                onClick={() => !isEmptySeat && onAgentClick(seat.id)}
                             >
                                 <AgentCard
-                                    agent={agent}
+                                    agent={seat}
                                     active={active}
                                     isFocused={isFocused}
                                     positionIndex={targetPositionIndex}
                                     timeLeft={active ? turnTimeLeft : null}
                                     timeLimit={30}
                                     showdown={!!showdownWinner}
-                                    isWinner={showdownWinner?.name === agent.name}
+                                    isWinner={showdownWinner?.name === seat.name}
+                                    seatState={seat.seatState}
                                 />
                             </motion.div>
                         );

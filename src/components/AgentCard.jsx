@@ -3,7 +3,48 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Terminal, Activity } from 'lucide-react';
 import PlayingCard from './PlayingCard';
 
-const AgentCard = ({ agent, active, positionIndex, isFocused, timeLeft, timeLimit = 30, showdown = false, isWinner = false }) => {
+// Agent personality database (maps agent names to their playing style)
+const AGENT_PERSONALITIES = {
+    'TightAggro': { icon: '🎯', label: 'TAG', desc: 'Premium hands only', color: '#ef4444', style: 'tight-aggressive' },
+    'LooseAggro': { icon: '⚡', label: 'LAG', desc: 'Many hands, very aggressive', color: '#f59e0b', style: 'loose-aggressive' },
+    'TightPassive': { icon: '🛡️', label: 'ROCK', desc: 'Strong hands only', color: '#3b82f6', style: 'tight-passive' },
+    'CallingStation': { icon: '🐟', label: 'FISH', desc: 'Calls everything', color: '#10b981', style: 'calling-station' },
+    'Maniac': { icon: '🎰', label: 'WILD', desc: 'Raises constantly', color: '#a855f7', style: 'maniac' },
+    'Professional': { icon: '👑', label: 'PRO', desc: 'Balanced & adaptive', color: '#fbbf24', style: 'professional' },
+    'ClawBot': { icon: '🤖', label: 'CLAW', desc: 'External API bot', color: '#8b5cf6', style: 'external' }
+};
+
+// Helper function to get personality based on agent name
+const getPersonality = (agentName) => {
+    // Try exact match first
+    if (AGENT_PERSONALITIES[agentName]) {
+        return AGENT_PERSONALITIES[agentName];
+    }
+    // Try case-insensitive partial match
+    const lowerName = agentName.toLowerCase();
+    for (const [key, personality] of Object.entries(AGENT_PERSONALITIES)) {
+        if (lowerName.includes(key.toLowerCase())) {
+            return personality;
+        }
+    }
+    // Default personality for unknown agents
+    return { icon: '🤖', label: 'BOT', desc: 'AI Agent', color: '#6b7280', style: 'unknown' };
+};
+
+const AgentCard = ({ agent, active, positionIndex, isFocused, timeLeft, timeLimit = 30, showdown = false, isWinner = false, seatState }) => {
+    // Handle empty seats
+    if (seatState === 'empty') {
+        return (
+            <div className="relative flex flex-col items-center justify-center w-36 opacity-30">
+                <div className="w-24 h-24 rounded-full border-2 border-dashed border-gray-600 bg-black/20 flex items-center justify-center">
+                    <span className="text-gray-500 text-xs font-mono">Empty</span>
+                </div>
+                <div className="mt-2 text-gray-500 text-xs">Seat {positionIndex + 1}</div>
+            </div>
+        );
+    }
+
+    const personality = getPersonality(agent.name);
 
     // Scale up the bottom-center seat for visual focus.
     // Only show face-up cards if we actually have hole card data (never in spectator mode).
@@ -90,7 +131,10 @@ const AgentCard = ({ agent, active, positionIndex, isFocused, timeLeft, timeLimi
                         exit={{ opacity: 0, y: 10 }}
                         className="absolute top-[-50px] left-1/2 -translate-x-1/2 z-30"
                     >
-                        <div className="bg-black/90 backdrop-blur-md px-3 py-1 rounded-lg border border-white/20 flex items-center gap-2 shadow-xl">
+                        <div
+                            className="backdrop-blur-md px-3 py-1 rounded-lg border border-white/20 flex items-center gap-2 shadow-xl"
+                            style={{ backgroundColor: `${personality.color}15` }}
+                        >
                             {/* Circular countdown */}
                             <div className="relative w-5 h-5">
                                 <svg className="w-full h-full -rotate-90">
@@ -107,7 +151,7 @@ const AgentCard = ({ agent, active, positionIndex, isFocused, timeLeft, timeLimi
                                         cy="10"
                                         r="8"
                                         fill="none"
-                                        stroke={isUrgent ? '#ef4444' : isWarning ? '#facc15' : '#10b981'}
+                                        stroke={isUrgent ? '#ef4444' : isWarning ? '#facc15' : personality.color}
                                         strokeWidth="2"
                                         strokeDasharray={`${2 * Math.PI * 8}`}
                                         strokeDashoffset={`${2 * Math.PI * 8 * (1 - percentage / 100)}`}
@@ -116,23 +160,37 @@ const AgentCard = ({ agent, active, positionIndex, isFocused, timeLeft, timeLimi
                                 </svg>
                                 <div
                                     className={`absolute inset-0 flex items-center justify-center text-[9px] font-bold ${
-                                        isUrgent ? 'text-red-400' : isWarning ? 'text-yellow-400' : 'text-emerald-400'
+                                        isUrgent ? 'text-red-400' : isWarning ? 'text-yellow-400' : 'text-white'
                                     }`}
                                 >
                                     {timeLeft}
                                 </div>
                             </div>
-                            {/* Thinking text */}
-                            <span className="text-[10px] text-white font-semibold whitespace-nowrap">
-                                Thinking...
-                            </span>
+                            {/* Personality icon + Thinking text */}
+                            <div className="flex items-center gap-1">
+                                <span className="text-[11px]">{personality.icon}</span>
+                                <span className="text-[10px] text-white font-semibold whitespace-nowrap">
+                                    {personality.label}
+                                </span>
+                            </div>
                         </div>
                     </motion.div>
                 )}
             </AnimatePresence>
 
+            {/* Waiting Badge */}
+            {seatState === 'waiting' && (
+                <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="absolute -top-12 left-1/2 -translate-x-1/2 z-40 bg-yellow-500/90 px-3 py-1 rounded-full shadow-lg"
+                >
+                    <span className="text-black text-xs font-bold">WAITING</span>
+                </motion.div>
+            )}
+
             {/* Avatar Circle */}
-            <div className="relative z-10 w-[72px] h-[72px] rounded-full border-2 border-[#111] shadow-[0_5px_15px_rgba(0,0,0,0.6)] bg-gradient-to-b from-[#253238] to-[#102027] flex items-center justify-center text-4xl mb-6">
+            <div className={`relative z-10 w-[72px] h-[72px] rounded-full border-2 border-[#111] shadow-[0_5px_15px_rgba(0,0,0,0.6)] bg-gradient-to-b from-[#253238] to-[#102027] flex items-center justify-center text-4xl mb-6 ${seatState === 'waiting' ? 'opacity-60' : ''}`}>
 
                 {/* Winner glow ring (golden) */}
                 {isWinner && showdown && (
@@ -181,11 +239,13 @@ const AgentCard = ({ agent, active, positionIndex, isFocused, timeLeft, timeLimi
                 {/* Nameplate row */}
                 <div className="relative w-[85%] h-6 bg-gradient-to-b from-[#1a1a2e] to-[#0f0f1a] rounded text-white flex items-center justify-center shadow-lg border-t border-white/20">
 
-                    {/* Left Flag Circle */}
-                    <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-white shadow-md border border-gray-300 overflow-hidden flex">
-                        <div className="w-1/3 h-full bg-blue-700" />
-                        <div className="w-1/3 h-full bg-white" />
-                        <div className="w-1/3 h-full bg-red-600" />
+                    {/* Left: Personality Badge (replaces flag) */}
+                    <div
+                        className="absolute -left-1 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full shadow-md border border-white/30 flex items-center justify-center text-[10px]"
+                        style={{ backgroundColor: personality.color }}
+                        title={`${personality.label}: ${personality.desc}`}
+                    >
+                        {personality.icon}
                     </div>
 
                     {/* Name */}

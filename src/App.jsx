@@ -115,7 +115,7 @@ function App() {
   const [activeMatchId, setActiveMatchId] = useState(null);
   const [spectatedAgentId, setSpectatedAgentId] = useState(null);
 
-  const { players, currentTurn, potSize, communityCards, eventLog } = useGameLoop(activeMatchId);
+  const { players, seats, currentTurn, potSize, communityCards, eventLog, sessionStatus } = useGameLoop(activeMatchId);
 
   if (currentView === 'landing') {
     return <LandingPage onEnterApp={() => setCurrentView('lobby')} onNavigateToSkill={() => setCurrentView('skill')} />;
@@ -154,10 +154,12 @@ function App() {
     <AppLayout>
       <PokerTable
         players={players}
+        seats={seats}
         currentTurn={currentTurn}
         potSize={potSize}
         communityCards={communityCards}
         eventLog={eventLog}
+        sessionStatus={sessionStatus}
         spectatedAgentId={spectatedAgentId}
         onAgentClick={setSpectatedAgentId}
         onLeave={() => {
