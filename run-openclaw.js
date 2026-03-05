@@ -20,9 +20,17 @@ async function api(method, path, token, body) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-/** OpenClawBot's strategy - balanced player */
+/** OpenClawBot's aggressive strategy */
 function decide(state) {
     const { hole_cards, board_cards, to_call, min_raise, max_raise, pot, your_stack, valid_actions } = state;
+
+    // Safety check - no cards yet (joining mid-hand)
+    if (!hole_cards || !hole_cards[0] || !hole_cards[1]) {
+        if (valid_actions.includes('check')) {
+            return { action: 'check', thought_process: '🤖 Waiting for cards' };
+        }
+        return { action: 'fold', thought_process: '🤖 No cards yet' };
+    }
 
     // Calculate hand strength
     const rankOrder = '23456789TJQKA';
@@ -31,57 +39,80 @@ function decide(state) {
     const paired = hole_cards[0][0] === hole_cards[1][0];
     const suited = hole_cards[0][1] === hole_cards[1][1];
 
-    // Better strength calculation
-    let strength = paired ? 0.65 + (r1 / 12) * 0.35 : (r1 + r2) / 24;
-    if (suited) strength += 0.1;  // Suited cards are stronger
+    // Fixed strength calculation - capped to prevent >100%
+    let strength = paired ? 0.55 + (r1 / 12) * 0.25 : (r1 + r2) / 24;
+    if (suited) strength += 0.08;  // Suited bonus
 
-    // High cards (A, K, Q, J) get a bonus
-    if (r1 >= 9 || r2 >= 9) strength += 0.15;
+    // High cards bonus - but keep total under 1.0
+    if (r1 >= 9 || r2 >= 9) strength += 0.10;
+    strength = Math.min(strength, 0.95);  // Cap at 95%
 
-    // Always check if we can
-    if (to_call === 0 && valid_actions.includes('check')) {
-        return { action: 'check' };
-    }
+    // Add some randomness for unpredictability (10% variance)
+    const randomFactor = 0.9 + Math.random() * 0.2;
+    strength *= randomFactor;
 
-    // Strong hands - raise aggressively
-    if (strength > 0.7 && valid_actions.includes('raise')) {
+    // AGGRESSIVE PLAY - check for raises FIRST before checking
+
+    // Strong hands - raise aggressively (lowered from 0.7 to 0.55)
+    if (strength > 0.55 && valid_actions.includes('raise')) {
         const raiseAmount = Math.min(
             Math.max(min_raise, Math.floor(pot * 0.75)),
             max_raise
         );
-        return { action: 'raise', amount: raiseAmount, thought_process: `🤖 Strong hand (${(strength*100).toFixed(0)}%), raising` };
+        return { action: 'raise', amount: raiseAmount, thought_process: `🤖 Strong hand (${(strength*100).toFixed(0)}%), raising aggressively!` };
     }
 
-    // Medium hands - call reasonable bets
-    if (strength > 0.4) {
-        if (to_call <= pot * 0.6 && valid_actions.includes('call')) {
+    // Occasional bluff raise with medium hands (20% of the time)
+    if (strength > 0.40 && Math.random() < 0.20 && valid_actions.includes('raise')) {
+        const bluffAmount = Math.min(
+            Math.max(min_raise, Math.floor(pot * 0.5)),
+            max_raise
+        );
+        return { action: 'raise', amount: bluffAmount, thought_process: `🤖 Bluff raise! (${(strength*100).toFixed(0)}%)` };
+    }
+
+    // Free to play - sometimes raise even with medium hands
+    if (to_call === 0) {
+        // 30% chance to raise with 45%+ hands when free
+        if (strength > 0.45 && Math.random() < 0.30 && valid_actions.includes('raise')) {
+            const raiseAmount = Math.min(min_raise * 2, max_raise);
+            return { action: 'raise', amount: raiseAmount, thought_process: `🤖 Free raise opportunity!` };
+        }
+        if (valid_actions.includes('check')) {
+            return { action: 'check', thought_process: `🤖 Checking (${(strength*100).toFixed(0)}%)` };
+        }
+    }
+
+    // Medium hands - call reasonable bets (lowered from 0.4 to 0.35)
+    if (strength > 0.35) {
+        if (to_call <= pot * 0.7 && valid_actions.includes('call')) {
             return { action: 'call', thought_process: `🤖 Decent hand (${(strength*100).toFixed(0)}%), calling` };
         }
         if (valid_actions.includes('check')) {
-            return { action: 'check' };
+            return { action: 'check', thought_process: `🤖 Medium hand, checking` };
         }
     }
 
-    // Weak hands but cheap to see
-    if (to_call > 0 && to_call <= your_stack * 0.05 && valid_actions.includes('call')) {
+    // Cheap calls are worth it
+    if (to_call > 0 && to_call <= your_stack * 0.08 && valid_actions.includes('call')) {
         return { action: 'call', thought_process: `🤖 Cheap call, worth seeing` };
     }
 
-    // Only fold bad hands facing big bets
-    if (strength < 0.3 && to_call > pot * 0.3) {
-        return { action: 'fold', thought_process: `🤖 Weak hand vs big bet, folding` };
+    // Only fold truly bad hands facing big bets
+    if (strength < 0.25 && to_call > pot * 0.4) {
+        return { action: 'fold', thought_process: `🤖 Weak hand (${(strength*100).toFixed(0)}%) vs big bet` };
     }
 
-    // Default to calling small bets or checking
-    if (valid_actions.includes('call') && to_call < pot * 0.25) {
-        return { action: 'call' };
+    // Call small bets even with weaker hands
+    if (valid_actions.includes('call') && to_call < pot * 0.3) {
+        return { action: 'call', thought_process: `🤖 Small bet, calling` };
     }
 
     if (valid_actions.includes('check')) {
-        return { action: 'check' };
+        return { action: 'check', thought_process: `🤖 Free check` };
     }
 
-    return { action: 'fold', thought_process: `🤖 No good options, folding` };
+    return { action: 'fold', thought_process: `🤖 Folding (${(strength*100).toFixed(0)}%)` };
 }
 
 async function runOpenClaw() {

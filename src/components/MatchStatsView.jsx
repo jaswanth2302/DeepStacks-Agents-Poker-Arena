@@ -115,95 +115,176 @@ const MatchStatsView = () => {
     }, []);
 
     const fetchMatches = async () => {
-        // Fetch all game sessions
-        const { data: sessions, error } = await supabase
-            .from('game_sessions')
-            .select('*')
-            .order('updated_at', { ascending: false });
+        try {
+            // Fetch all game sessions
+            const { data: sessions, error } = await supabase
+                .from('game_sessions')
+                .select('*')
+                .order('updated_at', { ascending: false });
 
-        if (error) {
-            console.error('Error fetching matches:', error);
-            setLoading(false);
-            return;
-        }
-
-        // Fetch all unique agent IDs from all sessions (including winner_ids)
-        const playerAgentIds = [...new Set(sessions.flatMap(s => s.player_ids || []))];
-        const winnerAgentIds = sessions.map(s => s.winner_id).filter(Boolean);
-        const allAgentIds = [...new Set([...playerAgentIds, ...winnerAgentIds])];
-
-        const { data: agents } = await supabase
-            .from('agents')
-            .select('id, name')
-            .in('id', allAgentIds);
-
-        const agentsMap = {};
-        (agents || []).forEach(a => agentsMap[a.id] = a);
-
-        // Transform to UI format
-        const formatted = sessions.map((session, idx) => {
-            const isLive = ['playing', 'waiting_for_action', 'showdown'].includes(session.status);
-            const playerData = session.player_data || [];
-            const maxPlayers = session.match_type === 'heads_up' ? 2 : session.match_type === '3max' ? 3 : 6;
-
-            // Calculate duration
-            let duration = 'N/A';
-            if (session.started_at) {
-                const start = new Date(session.started_at);
-                const end = session.ended_at ? new Date(session.ended_at) : new Date();
-                const diffMs = end - start;
-                const minutes = Math.floor(diffMs / 60000);
-                const seconds = Math.floor((diffMs % 60000) / 1000);
-                duration = `${minutes}m ${seconds}s`;
+            if (error) {
+                console.error('Error fetching matches:', error);
+                setLoading(false);
+                return;
             }
 
-            // Calculate average pot
-            const avgPot = session.total_hands > 0 ? Math.floor(session.pot_amount / session.total_hands) : 0;
+            // Extract agent IDs - Use player_data as PRIMARY source (6-max format)
+            // Only fallback to player_ids for legacy games without player_data
+            const playerAgentIds = [];
+            (sessions || []).forEach(s => {
+                // PRIMARY: Use player_data for 6-max games (authoritative source)
+                if (s?.player_data && Array.isArray(s.player_data)) {
+                    s.player_data.forEach(seat => {
+                        if (seat?.agent?.id) {
+                            playerAgentIds.push(seat.agent.id);
+                        }
+                    });
+                }
+                // FALLBACK: Only use player_ids if no player_data exists (legacy games)
+                else if (s?.player_ids) {
+                    playerAgentIds.push(...s.player_ids);
+                }
+            });
 
-            // Get agent info from player_data
-            const sessionAgents = playerData.map(pd => {
-                const agent = agentsMap[pd.id];
+            const winnerAgentIds = (sessions || [])
+                .map(s => s?.winner_id)
+                .filter(Boolean);
+            const allAgentIds = [...new Set([...playerAgentIds, ...winnerAgentIds])];
+
+            // Only query agents if we have IDs to look up
+            let agents = [];
+            if (allAgentIds.length > 0) {
+                const { data: agentData } = await supabase
+                    .from('agents')
+                    .select('id, name')
+                    .in('id', allAgentIds);
+                agents = agentData || [];
+            }
+
+            const agentsMap = {};
+            (agents || []).forEach(a => agentsMap[a.id] = a);
+
+            // Transform to UI format
+            const formatted = (sessions || []).map((session, idx) => {
+                const isLive = ['playing', 'waiting_for_action', 'showdown'].includes(session.status);
+                const maxPlayers = session.match_type === 'heads_up' ? 2 :
+                                 session.match_type === '3max' ? 3 :
+                                 session.match_type === '6max' ? 6 : 6;
+
+                // Calculate duration
+                let duration = 'N/A';
+                if (session.started_at) {
+                    const start = new Date(session.started_at);
+                    const end = session.ended_at ? new Date(session.ended_at) : new Date();
+                    const diffMs = end - start;
+                    const minutes = Math.floor(diffMs / 60000);
+                    const seconds = Math.floor((diffMs % 60000) / 1000);
+                    duration = `${minutes}m ${seconds}s`;
+                }
+
+                // Fix average pot calculation - use total_pot_amount or default to 0
+                const avgPot = session.total_hands > 0 && session.total_pot_amount > 0
+                    ? Math.floor(session.total_pot_amount / session.total_hands)
+                    : 0;
+
+                // Handle both old format (direct agent data) and new format (6-max seats)
+                let sessionAgents = [];
+                let actualPlayerCount = 0;
+
+                if (session.player_data && Array.isArray(session.player_data)) {
+                    // Check if it's 6-max seat format
+                    const isSeatsFormat = session.player_data.some(item =>
+                        item && typeof item === 'object' && 'state' in item
+                    );
+
+                    if (isSeatsFormat) {
+                        // New 6-max format with seats
+                        sessionAgents = session.player_data
+                            .filter(seat => seat?.state === 'occupied' && seat?.agent)
+                            .map(seat => {
+                                const agent = agentsMap[seat.agent.id];
+                                return {
+                                    name: agent ? agent.name : seat.agent.name || `Agent ${seat.agent.id.slice(0, 6)}`,
+                                    stack: seat.agent.stack || 0,
+                                    profitLoss: (seat.agent.stack || 0) - 10000, // Starting stack is 10000
+                                    vpip: 0, // N/A for now
+                                    pfr: 0, // N/A for now
+                                    handsWon: 0, // N/A for now
+                                    handsPlayed: session.total_hands || 0
+                                };
+                            });
+                        actualPlayerCount = session.player_data.filter(seat =>
+                            seat?.state === 'occupied' || seat?.state === 'waiting'
+                        ).length;
+                    } else {
+                        // Old format - direct agent objects
+                        sessionAgents = session.player_data.map(pd => {
+                            const agent = pd?.id ? agentsMap[pd.id] : null;
+                            return {
+                                name: agent ? agent.name : pd?.id ? `Agent ${pd.id.slice(0, 6)}` : 'Unknown Agent',
+                                stack: pd.stack || 0,
+                                profitLoss: (pd.stack || 0) - 10000, // Starting stack is 10000
+                                vpip: 0, // N/A for now
+                                pfr: 0, // N/A for now
+                                handsWon: 0, // N/A for now
+                                handsPlayed: session.total_hands || 0
+                            };
+                        });
+                        actualPlayerCount = session.player_data.length;
+                    }
+                } else if (session.player_ids && Array.isArray(session.player_ids)) {
+                    // Fallback to player_ids if no player_data
+                    sessionAgents = session.player_ids.map(id => {
+                        const agent = agentsMap[id];
+                        return {
+                            name: agent ? agent.name : `Agent ${id.slice(0, 6)}`,
+                            stack: 0,
+                            profitLoss: 0,
+                            vpip: 0,
+                            pfr: 0,
+                            handsWon: 0,
+                            handsPlayed: session.total_hands || 0
+                        };
+                    });
+                    actualPlayerCount = session.player_ids.length;
+                }
+
+                // Get winner info for ended matches
+                let winnerInfo = null;
+                if (!isLive && session.winner_id) {
+                    const winnerAgent = agentsMap[session.winner_id];
+                    const winnerStack = sessionAgents.find(a =>
+                        winnerAgent && a.name === winnerAgent.name
+                    );
+                    if (winnerAgent && winnerStack) {
+                        winnerInfo = {
+                            name: winnerAgent.name,
+                            profit: winnerStack.profitLoss
+                        };
+                    }
+                }
+
                 return {
-                    name: agent ? agent.name : `Agent ${pd.id.slice(0, 6)}`,
-                    stack: pd.stack || 0,
-                    profitLoss: (pd.stack || 0) - 10000, // Starting stack is 10000
-                    vpip: 0, // N/A for now
-                    pfr: 0, // N/A for now
-                    handsWon: 0, // N/A for now
-                    handsPlayed: session.total_hands || 0
+                    id: session.id,
+                    name: `Match ${session.match_type || 'Game'} #${session.id ? session.id.slice(0, 6) : idx + 1}`,
+                    status: isLive ? 'LIVE' : 'ENDED',
+                    players: `${actualPlayerCount}/${maxPlayers}`,
+                    pot: session.pot_amount || 0,
+                    handsPlayed: session.total_hands || 0,
+                    duration,
+                    avgPot,
+                    agents: sessionAgents,
+                    winnerInfo,
+                    recentHands: [] // Will be populated later
                 };
             });
 
-            // Get winner info for ended matches
-            let winnerInfo = null;
-            if (!isLive && session.winner_id) {
-                const winnerAgent = agentsMap[session.winner_id];
-                const winnerData = playerData.find(pd => pd.id === session.winner_id);
-                if (winnerAgent && winnerData) {
-                    winnerInfo = {
-                        name: winnerAgent.name,
-                        profit: winnerData.stack - 10000
-                    };
-                }
-            }
-
-            return {
-                id: session.id,
-                name: `Match ${session.match_type} #${session.id.slice(0, 6)}`,
-                status: isLive ? 'LIVE' : 'ENDED',
-                players: `${playerData.length}/${maxPlayers}`,
-                pot: session.pot_amount || 0,
-                handsPlayed: session.total_hands || 0,
-                duration,
-                avgPot,
-                agents: sessionAgents,
-                winnerInfo,
-                recentHands: [] // Will be populated later
-            };
-        });
-
-        setMatches(formatted);
-        setLoading(false);
+            setMatches(formatted);
+            setLoading(false);
+        } catch (err) {
+            console.error('Error in fetchMatches:', err);
+            setLoading(false);
+        }
     };
 
     const formatCurrency = (amount) => {
@@ -270,7 +351,7 @@ const MatchStatsView = () => {
                         >
                             {/* # */}
                             <div className="col-span-1 text-gray-600 font-mono text-xs">
-                                {String(match.id).padStart(2, '0')}
+                                {String(idx + 1).padStart(2, '0')}
                             </div>
 
                             {/* Match Name */}

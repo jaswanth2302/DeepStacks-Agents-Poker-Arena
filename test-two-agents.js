@@ -26,6 +26,15 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function decide(state) {
     const { hole_cards, board_cards, to_call, min_raise, max_raise, pot, your_stack, valid_actions } = state;
 
+    // Check if hole_cards exists and has valid data
+    if (!hole_cards || !hole_cards[0] || !hole_cards[1]) {
+        // No cards yet (probably waiting for next hand) - just check/fold
+        if (valid_actions.includes('check')) {
+            return { action: 'check', thought_process: 'No cards yet, checking' };
+        }
+        return { action: 'fold', thought_process: 'No cards yet, folding' };
+    }
+
     // Very basic hand strength: high cards = stronger
     const rankOrder = '23456789TJQKA';
     const r1 = rankOrder.indexOf(hole_cards[0][0]);
@@ -72,6 +81,23 @@ async function runAgent(name, token) {
         try {
             const state = await api('GET', '/my-game', token);
             consecutiveErrors = 0; // Reset error counter on successful API call
+
+            // Check if agent is out of chips ONLY when NOT in an active hand
+            // This prevents leaving mid-hand which disrupts the game
+            if (state.your_stack !== undefined && state.your_stack <= 0) {
+                // Only leave if we're between hands (idle) or after showdown completes
+                if (state.status === 'idle' || state.status === 'showdown') {
+                    console.log(`[${name}] Out of chips! Leaving table after hand completes...`);
+                    // If in showdown, wait for it to display first
+                    if (state.status === 'showdown') {
+                        await sleep(2000); // Give time for showdown to display
+                    }
+                    await api('POST', '/leave', token);
+                    console.log(`[${name}] Left the game.`);
+                    break; // Exit the loop
+                }
+                // If still in an active hand, continue playing (will auto-fold/check with no chips)
+            }
 
             if (state.status === 'idle') {
                 console.log(`[${name}] Idle — joining queue`);
